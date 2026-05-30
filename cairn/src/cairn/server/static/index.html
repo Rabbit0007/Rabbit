@@ -82,8 +82,53 @@
   }
 
   .apple-auth {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
     background: transparent !important;
     padding: clamp(24px, 4vw, 56px) 18px !important;
+  }
+
+  .apple-auth::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background:
+      linear-gradient(120deg, rgba(0, 113, 227, 0.13), rgba(255, 255, 255, 0) 34%),
+      linear-gradient(240deg, rgba(52, 199, 89, 0.1), rgba(255, 255, 255, 0) 32%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 760'%3E%3Cg fill='none' stroke='%230071e3' stroke-width='2' stroke-linecap='round' stroke-opacity='.28'%3E%3Cpath d='M130 490 C260 330 376 360 515 252 S807 188 1048 292'/%3E%3Cpath d='M204 252 C374 170 486 205 618 350 S864 522 1048 454'/%3E%3Cpath d='M242 590 C410 478 548 468 692 542 S915 632 1080 548'/%3E%3Cpath d='M156 362 L330 304 L515 252 L642 356 L822 306 L1048 292'/%3E%3Cpath d='M330 304 L442 460 L642 356 L812 468 L1048 454'/%3E%3C/g%3E%3Cg fill='%230071e3' fill-opacity='.32'%3E%3Ccircle cx='130' cy='490' r='7'/%3E%3Ccircle cx='204' cy='252' r='6'/%3E%3Ccircle cx='330' cy='304' r='8'/%3E%3Ccircle cx='515' cy='252' r='7'/%3E%3Ccircle cx='642' cy='356' r='9'/%3E%3Ccircle cx='812' cy='468' r='6'/%3E%3Ccircle cx='1048' cy='292' r='8'/%3E%3Ccircle cx='1048' cy='454' r='6'/%3E%3Ccircle cx='242' cy='590' r='5'/%3E%3Ccircle cx='692' cy='542' r='7'/%3E%3Ccircle cx='1080' cy='548' r='5'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: min(1260px, 92vw) auto;
+    opacity: 0.55;
+    mask-image: linear-gradient(180deg, transparent 2%, #000 22%, #000 78%, transparent 98%);
+  }
+
+  .apple-auth::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    width: min(980px, 76vw);
+    height: min(660px, 64vh);
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -43%);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 44px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.12)),
+      repeating-linear-gradient(0deg, rgba(29, 29, 31, 0.03) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(90deg, rgba(29, 29, 31, 0.025) 0 1px, transparent 1px 34px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.76),
+      0 40px 120px rgba(0, 0, 0, 0.08);
+    opacity: 0.72;
+  }
+
+  .apple-auth > .w-full {
+    max-width: min(500px, calc(100vw - 36px)) !important;
   }
 
   .apple-auth-card {
@@ -94,18 +139,65 @@
     backdrop-filter: saturate(180%) blur(24px);
   }
 
+  .apple-auth-card .flex.rounded-xl {
+    min-height: 48px;
+  }
+
+  .apple-auth-card input {
+    min-height: 48px;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    font-size: 15px !important;
+  }
+
+  .apple-auth-card button[type="submit"] {
+    min-height: 50px;
+    font-size: 15px !important;
+  }
+
   body > nav {
-    height: 58px !important;
-    padding: 0 22px !important;
-    gap: 12px !important;
+    height: 76px !important;
+    padding: 0 clamp(22px, 2.4vw, 38px) !important;
+    gap: 18px !important;
     background: rgba(251, 251, 253, 0.74) !important;
     border-color: var(--apple-line) !important;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72), 0 10px 36px rgba(0, 0, 0, 0.035);
     backdrop-filter: saturate(180%) blur(24px);
   }
 
+  body > nav > .flex:first-child {
+    gap: 12px !important;
+  }
+
+  body > nav > .flex:first-child > div {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 14px !important;
+  }
+
+  body > nav > .flex:first-child img {
+    width: 24px !important;
+    height: 24px !important;
+  }
+
+  body > nav > .flex:first-child span {
+    font-size: 17px !important;
+  }
+
+  body > nav button {
+    min-height: 44px !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+    border-radius: 16px !important;
+    font-size: 15px !important;
+  }
+
+  body > nav .text-xs {
+    font-size: 15px !important;
+  }
+
   header {
-    min-height: 58px;
+    min-height: 66px;
     background: rgba(251, 251, 253, 0.76) !important;
     border-color: var(--apple-line) !important;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -258,9 +350,9 @@
   }
 
   .app-project-header {
-    min-height: 68px;
-    padding: 12px clamp(18px, 2vw, 30px) !important;
-    gap: 16px !important;
+    min-height: 82px;
+    padding: 14px clamp(24px, 2.4vw, 42px) !important;
+    gap: 20px !important;
   }
 
   .app-project-header .app-brand-lockup {
@@ -275,18 +367,18 @@
   }
 
   .app-project-header .app-page-title span:first-child {
-    font-size: 17px;
+    font-size: 22px;
     line-height: 1.2;
   }
 
   .app-project-header .app-page-title span:last-child {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--apple-muted);
   }
 
   .app-project-stats {
     align-items: center;
-    padding: 7px 10px;
+    padding: 9px 13px;
     border: 1px solid rgba(29, 29, 31, 0.08);
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.58);
@@ -294,13 +386,15 @@
   }
 
   .app-primary-actions button {
-    height: 34px !important;
-    padding-left: 13px !important;
-    padding-right: 13px !important;
+    height: 42px !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+    font-size: 14px !important;
   }
 
   .app-secondary-actions button {
-    height: 34px !important;
+    height: 42px !important;
+    font-size: 14px !important;
   }
 
   .app-project-grid {
@@ -322,6 +416,256 @@
 
   .app-project-card .app-card-actions {
     min-height: 38px;
+  }
+
+  .app-project-card .app-card-actions button {
+    background-color: rgba(255, 255, 255, 0.66) !important;
+  }
+
+  .app-project-card .app-card-actions button:last-child {
+    opacity: 0.72;
+  }
+
+  .app-project-card:hover .app-card-actions button:last-child,
+  .app-project-card:focus-within .app-card-actions button:last-child {
+    opacity: 1;
+  }
+
+  [x-show*="currentView === 'projects'"] {
+    position: relative;
+  }
+
+  [x-show*="currentView === 'projects'"]::before {
+    content: "";
+    position: absolute;
+    inset: 82px 0 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1300 740'%3E%3Cg fill='none' stroke='%230071e3' stroke-width='2' stroke-linecap='round' stroke-opacity='.18'%3E%3Cpath d='M102 515 C270 365 410 398 568 278 S862 174 1190 330'/%3E%3Cpath d='M148 248 C350 174 528 228 690 384 S946 562 1196 476'/%3E%3Cpath d='M280 612 C482 506 634 514 780 584 S1032 640 1206 566'/%3E%3Cpath d='M186 394 L372 332 L568 278 L690 384 L882 334 L1190 330'/%3E%3Cpath d='M372 332 L488 488 L690 384 L856 494 L1196 476'/%3E%3C/g%3E%3Cg fill='%230071e3' fill-opacity='.22'%3E%3Ccircle cx='102' cy='515' r='8'/%3E%3Ccircle cx='148' cy='248' r='6'/%3E%3Ccircle cx='372' cy='332' r='9'/%3E%3Ccircle cx='568' cy='278' r='8'/%3E%3Ccircle cx='690' cy='384' r='10'/%3E%3Ccircle cx='856' cy='494' r='7'/%3E%3Ccircle cx='1190' cy='330' r='9'/%3E%3Ccircle cx='1196' cy='476' r='7'/%3E%3Ccircle cx='280' cy='612' r='6'/%3E%3Ccircle cx='780' cy='584' r='8'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center 42%;
+    background-size: min(1300px, 86vw) auto;
+    opacity: 0.42;
+    mask-image: linear-gradient(180deg, transparent 0%, #000 18%, #000 76%, transparent 100%);
+  }
+
+  [x-show*="currentView === 'projects'"] > header,
+  [x-show*="currentView === 'projects'"] > div {
+    position: relative;
+    z-index: 1;
+  }
+
+  .app-empty-state {
+    width: min(460px, calc(100vw - 42px));
+    min-height: 280px;
+    margin: clamp(72px, 12vh, 140px) auto 0;
+    padding: 42px;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 30px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.58)),
+      repeating-linear-gradient(0deg, rgba(29, 29, 31, 0.028) 0 1px, transparent 1px 28px),
+      repeating-linear-gradient(90deg, rgba(29, 29, 31, 0.022) 0 1px, transparent 1px 28px);
+    box-shadow: var(--apple-shadow-md);
+    backdrop-filter: saturate(180%) blur(22px);
+  }
+
+  .app-empty-state img,
+  .app-empty-state svg {
+    width: 86px !important;
+    height: 86px !important;
+    margin-bottom: 20px !important;
+    opacity: 0.36 !important;
+    filter: drop-shadow(0 14px 20px rgba(0, 113, 227, 0.12));
+  }
+
+  .app-empty-state p:first-of-type {
+    font-size: 24px !important;
+    line-height: 1.25;
+    color: var(--apple-text) !important;
+  }
+
+  .app-empty-state p:last-of-type {
+    font-size: 15px !important;
+    color: var(--apple-muted) !important;
+  }
+
+  .app-section-header {
+    min-height: 82px;
+    padding: 14px clamp(24px, 2.4vw, 42px) !important;
+    gap: 20px !important;
+  }
+
+  .app-section-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .app-section-title strong {
+    color: var(--apple-text);
+    font-size: 22px;
+    line-height: 1.2;
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+
+  .app-section-title span {
+    color: var(--apple-muted);
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  .app-section-actions {
+    padding: 7px;
+    border: 1px solid rgba(29, 29, 31, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  }
+
+  .app-section-actions button {
+    height: 40px !important;
+    border-radius: 999px !important;
+    background-color: rgba(255, 255, 255, 0.68) !important;
+    font-size: 14px !important;
+  }
+
+  .app-data-canvas {
+    width: min(100%, 1180px);
+    margin: 0 auto;
+  }
+
+  .app-data-canvas > .grid,
+  .app-data-canvas .grid.grid-cols-1 {
+    align-items: stretch;
+  }
+
+  .app-graph-header {
+    min-height: 64px;
+    padding: 10px clamp(14px, 1.7vw, 24px) !important;
+    gap: 12px !important;
+  }
+
+  .app-graph-title {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+    min-width: 0;
+  }
+
+  .app-graph-title h2 {
+    font-size: 16px !important;
+    line-height: 1.25 !important;
+  }
+
+  .app-graph-counts {
+    padding: 7px 11px;
+    border: 1px solid rgba(29, 29, 31, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.56);
+  }
+
+  .app-graph-actions,
+  .app-graph-user-actions {
+    padding: 5px;
+    border: 1px solid rgba(29, 29, 31, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+
+  .app-graph-actions button,
+  .app-graph-user-actions button {
+    height: 30px !important;
+    border-radius: 999px !important;
+    background-color: rgba(255, 255, 255, 0.68) !important;
+  }
+
+  .app-graph-layout {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0)),
+      rgba(245, 245, 247, 0.38);
+  }
+
+  .app-graph-canvas {
+    background:
+      linear-gradient(rgba(29, 29, 31, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(29, 29, 31, 0.02) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  .app-floating-tools,
+  .app-node-actions {
+    padding: 6px;
+    border: 1px solid rgba(29, 29, 31, 0.08);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.68);
+    box-shadow: var(--apple-shadow-sm);
+    backdrop-filter: saturate(180%) blur(18px);
+  }
+
+  .app-floating-tools button,
+  .app-node-actions button,
+  .app-floating-tools select {
+    height: 32px !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+  }
+
+  .app-node-actions {
+    max-width: min(660px, calc(100vw - 430px));
+  }
+
+  .app-node-actions > div {
+    padding: 2px;
+    border-radius: 14px;
+    background: rgba(245, 245, 247, 0.56);
+  }
+
+  .app-resize-handle {
+    width: 10px !important;
+    background: linear-gradient(90deg, transparent, rgba(29, 29, 31, 0.035), transparent);
+  }
+
+  .app-inspector {
+    background: rgba(251, 251, 253, 0.84) !important;
+    border-left-color: rgba(29, 29, 31, 0.1) !important;
+    box-shadow: -18px 0 46px rgba(0, 0, 0, 0.055);
+    backdrop-filter: saturate(180%) blur(22px);
+  }
+
+  .app-inspector-tabs {
+    padding: 8px;
+    gap: 4px;
+    border-bottom-color: rgba(29, 29, 31, 0.08) !important;
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .app-inspector-tabs button {
+    border: 0 !important;
+    border-radius: 999px;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .app-inspector-tabs button[class*="border-b-2"] {
+    background: var(--apple-blue-soft);
+    box-shadow: inset 0 0 0 1px rgba(0, 113, 227, 0.14);
+  }
+
+  .app-inspector-body {
+    padding: 18px !important;
+  }
+
+  .app-inspector article,
+  .app-inspector section,
+  .app-inspector button.rounded-2xl {
+    border-color: rgba(255, 255, 255, 0.72) !important;
+    box-shadow: var(--apple-shadow-sm);
   }
 
   .fixed.inset-0 > .bg-white {
@@ -407,6 +751,70 @@
 
     .app-project-card {
       min-height: 208px;
+    }
+
+    .app-section-header,
+    .app-graph-header {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px 12px !important;
+      padding-top: 10px !important;
+      padding-bottom: 10px !important;
+    }
+
+    .app-section-header > .flex-1,
+    .app-graph-header > .flex-1 {
+      display: none !important;
+    }
+
+    .app-section-actions,
+    .app-graph-actions,
+    .app-graph-user-actions,
+    .app-graph-counts {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+      overflow-x: auto;
+      border-radius: 18px;
+    }
+
+    .app-section-title span {
+      display: none;
+    }
+
+    .app-data-canvas {
+      width: 100%;
+    }
+
+    .app-graph-layout {
+      flex-direction: column !important;
+    }
+
+    .app-graph-canvas {
+      min-height: 420px;
+      flex: 1 1 auto;
+    }
+
+    .app-resize-handle {
+      display: none !important;
+    }
+
+    .app-inspector {
+      width: 100% !important;
+      min-width: 0 !important;
+      flex-basis: 330px !important;
+      border-left: 0 !important;
+      border-top: 1px solid rgba(29, 29, 31, 0.1) !important;
+      box-shadow: 0 -18px 46px rgba(0, 0, 0, 0.06);
+    }
+
+    .app-node-actions {
+      left: 12px !important;
+      right: 12px !important;
+      top: 58px !important;
+      max-width: none;
+      justify-content: flex-start !important;
+      overflow-x: auto;
     }
 
     .apple-auth-card {
@@ -787,7 +1195,7 @@
 
   <div x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="flex-1 overflow-y-auto p-4">
     <template x-if="projects.length === 0">
-      <div class="flex flex-col items-center justify-center h-full text-slate-400">
+      <div class="app-empty-state flex flex-col items-center justify-center text-slate-400">
         <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
         <p class="text-lg font-medium text-slate-500">还没有项目</p>
         <p class="text-sm mt-1">创建一个项目开始探索</p>
@@ -901,11 +1309,11 @@
 <!-- ═══════════ GRAPH VIEW ═══════════ -->
 <template x-if="authChecked && authenticated && view === 'graph'">
 <div class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
+  <header class="app-graph-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0 z-20">
     <button @click="backToList()" class="p-1.5 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
     </button>
-    <div class="title-action-trigger flex items-center gap-2 min-w-0">
+    <div class="app-graph-title title-action-trigger flex items-center gap-2 min-w-0">
       <span class="text-[11px] font-mono text-slate-400" x-text="project.project.id"></span>
       <h2 class="text-[15px] font-semibold text-slate-700 truncate" x-text="project.project.title"></h2>
       <button x-show="!replay.active" @click="openRenameProject(project.project.id, project.project.title)"
@@ -919,11 +1327,11 @@
         x-text="projectStatusLabel(project.project.status)"></span>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-4 text-xs text-slate-400">
+    <div class="app-graph-counts flex items-center gap-4 text-xs text-slate-400">
       <span x-text="`${project.facts.length} 个事实`"></span>
       <span x-text="`${project.intents.length} 个意图`"></span>
     </div>
-    <div class="flex items-center gap-1.5">
+    <div class="app-graph-actions flex items-center gap-1.5">
       <template x-if="!replay.active">
         <button @click="startProjectReplay()" class="px-2.5 py-1 rounded-lg border border-violet-200 text-xs text-violet-600 hover:bg-violet-50 transition flex items-center gap-1.5">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/><path d="M4 5v14"/></svg>
@@ -977,7 +1385,7 @@
         删除
       </button>
     </div>
-    <div class="flex items-center gap-1.5 ml-1">
+    <div class="app-graph-user-actions flex items-center gap-1.5 ml-1">
       <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
@@ -987,10 +1395,10 @@
     </div>
   </header>
 
-  <div class="flex-1 flex overflow-hidden" id="graphLayout">
+  <div class="app-graph-layout flex-1 flex overflow-hidden" id="graphLayout">
     <!-- Graph -->
-    <div class="flex-1 relative min-w-0">
-      <div class="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+    <div class="app-graph-canvas flex-1 relative min-w-0">
+      <div class="app-floating-tools absolute top-3 left-3 z-10 flex items-center gap-1.5">
         <button @click="fitGraph()" class="h-7 w-7 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-slate-200/60 text-slate-500 hover:text-slate-700 hover:bg-white transition inline-flex items-center justify-center" title="适配图形" aria-label="适配图形">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
@@ -1032,7 +1440,7 @@
         </div>
       </template>
 
-      <div class="absolute top-3 right-3 z-10 flex flex-wrap justify-end gap-2">
+      <div class="app-node-actions absolute top-3 right-3 z-10 flex flex-wrap justify-end gap-2">
         <div class="flex gap-1.5" x-show="projectIsActive()">
           <button @click="openCreateIntent()" :disabled="!canActOnSelectedFacts()"
             class="px-3 py-1.5 bg-white/90 backdrop-blur border border-brand-200 text-brand-600 rounded-lg shadow-sm text-xs font-medium hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1">
@@ -1074,13 +1482,13 @@
       <div id="cy" class="relative z-0 flex-1 h-full"></div>
     </div>
 
-    <div @pointerdown.prevent="startPanelResize($event)" class="w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
+    <div @pointerdown.prevent="startPanelResize($event)" class="app-resize-handle w-2 shrink-0 cursor-col-resize group flex items-stretch justify-center touch-none relative z-20">
       <div class="w-px bg-slate-200/70 transition group-hover:bg-brand-300" :class="{ 'bg-brand-400': isResizingPanel }"></div>
     </div>
 
     <!-- Side panel -->
-    <div class="border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
-      <div class="flex border-b border-slate-100 shrink-0">
+    <div class="app-inspector border-l border-slate-200/60 bg-white flex flex-col overflow-hidden shrink-0 relative z-20" :style="{ width: sidePanelWidth + 'px', minWidth: sidePanelWidth + 'px', flexBasis: sidePanelWidth + 'px' }">
+      <div class="app-inspector-tabs flex border-b border-slate-100 shrink-0">
         <button @click="sideTab = 'detail'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
           :class="sideTab === 'detail' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">详情</button>
         <button @click="sideTab = 'hints'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
@@ -1094,7 +1502,7 @@
       </div>
 
       <!-- Detail -->
-      <div x-show="sideTab === 'detail'" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+      <div x-show="sideTab === 'detail'" class="app-inspector-body flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
         <template x-if="!selectedNode">
           <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-5 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-400">点击节点或连线</p>
@@ -1214,7 +1622,7 @@
       </div>
 
       <!-- Hints -->
-      <div x-show="sideTab === 'hints'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-amber-50/25">
+      <div x-show="sideTab === 'hints'" class="app-inspector-body flex-1 overflow-y-auto p-4 space-y-3 bg-amber-50/25">
         <template x-if="project.hints.length === 0">
           <div class="rounded-2xl border border-dashed border-amber-200 bg-white/80 px-5 py-10 text-center shadow-sm">
             <p class="text-sm text-slate-300">还没有提示</p>
@@ -1240,7 +1648,7 @@
       </div>
 
       <!-- Log -->
-      <div x-show="sideTab === 'log'" class="flex-1 overflow-y-auto p-4 space-y-3">
+      <div x-show="sideTab === 'log'" class="app-inspector-body flex-1 overflow-y-auto p-4 space-y-3">
         <template x-if="selectedTimelineSummary()">
           <section class="sticky top-0 z-10 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur px-4 py-3 shadow-sm">
             <div class="space-y-2.5">
@@ -1303,7 +1711,7 @@
            a formatted timestamp, and the actor. The scroll container preserves
            the user's scroll position across polling refreshes (requirement
            14.6 / 15.4) via x-ref="attackTimelineScroll". -->
-      <div x-show="sideTab === 'timeline'" x-ref="attackTimelineScroll" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/40">
+      <div x-show="sideTab === 'timeline'" x-ref="attackTimelineScroll" class="app-inspector-body flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/40">
         <template x-if="attackTimelineError">
           <div class="rounded-2xl border border-dashed border-rose-200 bg-white/80 px-5 py-10 text-center shadow-sm">
             <p class="text-sm text-rose-400" x-text="attackTimelineError"></p>
@@ -1360,15 +1768,18 @@
      view. Severity summary cards, filter controls, and the findings table are
      driven by the cairnApp() data object (requirements 6.3, 6.7, 7.1–7.5). -->
 <div x-show="authChecked && authenticated && view === 'list' && currentView === 'vulnerabilities'" x-cloak class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+  <header class="app-section-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
       <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <svg class="w-4.5 h-4.5 text-rose-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M12 9v3.75m0 3.75h.008M10.34 3.94 1.78 18a1.75 1.75 0 0 0 1.51 2.63h17.42A1.75 1.75 0 0 0 22.22 18L13.66 3.94a1.75 1.75 0 0 0-3.02 0Z"/></svg>
       </div>
-      <span class="font-semibold text-slate-700 tracking-tight">漏洞报告</span>
+      <div class="app-section-title">
+        <strong>漏洞报告</strong>
+        <span>发现、筛选与导出安全结论</span>
+      </div>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-1.5">
+    <div class="app-section-actions flex items-center gap-1.5">
       <!-- Export controls (task 11.2, requirements 8.1, 8.2, 8.3). Each button
            downloads the report in its format, honouring the active severity /
            project filters via exportVulnerabilities(). -->
@@ -1393,6 +1804,7 @@
   </header>
 
   <div class="flex-1 overflow-y-auto p-4">
+    <div class="app-data-canvas">
     <!-- Severity summary cards (requirement 6.3, 6.7) -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       <div class="bg-white rounded-2xl border border-slate-200/60 p-4 flex items-center gap-3">
@@ -1514,6 +1926,7 @@
         </tbody>
       </table>
     </div>
+    </div>
   </div>
 </div>
 
@@ -1524,15 +1937,18 @@
      highlighting, and the connectivity warning are driven by the cairnApp()
      data object (requirements 9.1–9.5, 10.1–10.6). -->
 <div x-show="authChecked && authenticated && view === 'list' && currentView === 'workers'" x-cloak class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+  <header class="app-section-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
       <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <svg class="w-4.5 h-4.5 text-brand-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25A2.25 2.25 0 0 1 5.25 3h13.5A2.25 2.25 0 0 1 21 5.25Z"/></svg>
       </div>
-      <span class="font-semibold text-slate-700 tracking-tight">工作节点</span>
+      <div class="app-section-title">
+        <strong>工作节点</strong>
+        <span>实时状态、任务历史与健康度</span>
+      </div>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-2">
+    <div class="app-section-actions flex items-center gap-2">
       <!-- Live polling indicator + last-update time (requirements 9.2, 10.4). -->
       <span class="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-slate-400">
         <span class="h-1.5 w-1.5 rounded-full" :class="workersConnLost ? 'bg-slate-300' : 'bg-emerald-400 animate-pulse'"></span>
@@ -1547,6 +1963,7 @@
   </header>
 
   <div class="flex-1 overflow-y-auto p-4">
+    <div class="app-data-canvas">
     <!-- Connectivity warning: shown after 3 consecutive failed polls
          (requirement 9.5). Surfaces the last successful update time. -->
     <div x-show="workersConnLost" x-cloak
@@ -1678,6 +2095,7 @@
         </div>
       </template>
     </div>
+    </div>
   </div>
 </div>
 
@@ -1690,15 +2108,18 @@
      Project form (requirements 12.2, 12.3, 13.3) which is submitted through the
      standard project creation flow (requirement 12.5). -->
 <div x-show="authChecked && authenticated && view === 'list' && currentView === 'templates'" x-cloak class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+  <header class="app-section-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
       <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <svg class="w-4.5 h-4.5 text-violet-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25A2.25 2.25 0 0 1 8.25 10.5H6a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25Zm9.75-9.75A2.25 2.25 0 0 1 15.75 3.75H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6Zm0 9.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"/></svg>
       </div>
-      <span class="font-semibold text-slate-700 tracking-tight">模板</span>
+      <div class="app-section-title">
+        <strong>模板</strong>
+        <span>复用常见探索配置</span>
+      </div>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-2">
+    <div class="app-section-actions flex items-center gap-2">
       <button type="button" @click="openTemplateModal()"
         class="h-7 px-2.5 rounded-lg bg-brand-500 text-white text-xs font-medium hover:bg-brand-600 transition inline-flex items-center gap-1.5 shadow-sm shadow-brand-200">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
@@ -1713,6 +2134,7 @@
   </header>
 
   <div class="flex-1 overflow-y-auto p-4">
+    <div class="app-data-canvas">
     <!-- Fetch error -->
     <div x-show="templatesError" x-cloak
       class="mb-4 bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
@@ -1798,6 +2220,7 @@
           </div>
         </div>
       </template>
+    </div>
     </div>
   </div>
 </div>
