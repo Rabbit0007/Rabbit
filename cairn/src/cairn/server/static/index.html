@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -19,8 +19,402 @@
   #cy { width: 100%; height: 100%; }
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-  .overlay { background: rgba(15,23,42,0.25); backdrop-filter: blur(6px); }
+  ::-webkit-scrollbar-thumb { background: rgba(60, 60, 67, 0.28); border-radius: 999px; }
+
+  :root {
+    --apple-bg: #f5f5f7;
+    --apple-panel: rgba(255, 255, 255, 0.78);
+    --apple-panel-strong: rgba(255, 255, 255, 0.9);
+    --apple-line: rgba(29, 29, 31, 0.1);
+    --apple-line-strong: rgba(29, 29, 31, 0.16);
+    --apple-text: #1d1d1f;
+    --apple-muted: #6e6e73;
+    --apple-blue: #0071e3;
+    --apple-blue-hover: #0077ed;
+    --apple-blue-soft: rgba(0, 113, 227, 0.11);
+    --apple-green: #34c759;
+    --apple-orange: #ff9f0a;
+    --apple-red: #ff3b30;
+    --apple-radius-lg: 16px;
+    --apple-radius-xl: 22px;
+    --apple-radius-2xl: 28px;
+    --apple-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 30px rgba(0, 0, 0, 0.06);
+    --apple-shadow-md: 0 18px 55px rgba(0, 0, 0, 0.12);
+  }
+
+  html {
+    background: var(--apple-bg);
+  }
+
+  body {
+    position: relative;
+    color: var(--apple-text);
+    background:
+      linear-gradient(145deg, rgba(0, 113, 227, 0.08), rgba(255, 255, 255, 0) 34%),
+      linear-gradient(215deg, rgba(52, 199, 89, 0.055), rgba(255, 255, 255, 0) 32%),
+      linear-gradient(180deg, #fbfbfd 0%, #f5f5f7 42%, #eef1f5 100%) !important;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+    letter-spacing: 0;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.48) 0 0),
+      repeating-linear-gradient(0deg, rgba(29, 29, 31, 0.022) 0 1px, transparent 1px 24px),
+      repeating-linear-gradient(90deg, rgba(29, 29, 31, 0.018) 0 1px, transparent 1px 24px);
+    opacity: 0.55;
+  }
+
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .overlay {
+    background: rgba(29, 29, 31, 0.28);
+    backdrop-filter: saturate(180%) blur(22px);
+  }
+
+  .apple-auth {
+    background: transparent !important;
+    padding: clamp(24px, 4vw, 56px) 18px !important;
+  }
+
+  .apple-auth-card {
+    background: var(--apple-panel-strong) !important;
+    border: 1px solid rgba(255, 255, 255, 0.66) !important;
+    border-radius: var(--apple-radius-2xl) !important;
+    box-shadow: var(--apple-shadow-md);
+    backdrop-filter: saturate(180%) blur(24px);
+  }
+
+  body > nav {
+    height: 58px !important;
+    padding: 0 22px !important;
+    gap: 12px !important;
+    background: rgba(251, 251, 253, 0.74) !important;
+    border-color: var(--apple-line) !important;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.72), 0 10px 36px rgba(0, 0, 0, 0.035);
+    backdrop-filter: saturate(180%) blur(24px);
+  }
+
+  header {
+    min-height: 58px;
+    background: rgba(251, 251, 253, 0.76) !important;
+    border-color: var(--apple-line) !important;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+    backdrop-filter: saturate(180%) blur(22px);
+  }
+
+  [x-ref="projectListScroll"],
+  [x-show*="currentView === 'templates'"] > .flex-1.overflow-y-auto,
+  [x-show*="currentView === 'vulnerabilities'"] > .flex-1.overflow-y-auto,
+  [x-show*="currentView === 'workers'"] > .flex-1.overflow-y-auto {
+    padding: clamp(18px, 2.1vw, 30px) !important;
+  }
+
+  .bg-white,
+  .bg-white\/80,
+  .bg-white\/90,
+  .bg-white\/92 {
+    background-color: var(--apple-panel) !important;
+    backdrop-filter: saturate(180%) blur(18px);
+  }
+
+  .bg-slate-50,
+  .bg-slate-50\/70,
+  .hover\:bg-slate-50:hover {
+    background-color: rgba(245, 245, 247, 0.72) !important;
+  }
+
+  .border-slate-100,
+  .border-slate-200,
+  .border-slate-200\/60,
+  .border-slate-200\/70,
+  .hover\:border-slate-300:hover {
+    border-color: var(--apple-line) !important;
+  }
+
+  .text-slate-700,
+  .text-slate-800 {
+    color: var(--apple-text) !important;
+  }
+
+  .text-slate-400,
+  .text-slate-500 {
+    color: var(--apple-muted) !important;
+  }
+
+  .rounded-lg { border-radius: 12px !important; }
+  .rounded-xl { border-radius: var(--apple-radius-lg) !important; }
+  .rounded-2xl { border-radius: var(--apple-radius-xl) !important; }
+
+  .shadow-sm {
+    box-shadow: var(--apple-shadow-sm) !important;
+  }
+
+  .shadow-2xl,
+  .hover\:shadow-lg:hover {
+    box-shadow: var(--apple-shadow-md) !important;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    letter-spacing: 0;
+  }
+
+  button {
+    transition:
+      transform 160ms ease,
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      box-shadow 160ms ease,
+      opacity 160ms ease;
+  }
+
+  button:not(:disabled):active {
+    transform: scale(0.985);
+  }
+
+  button[class*="bg-brand-500"],
+  button[class*="bg-brand-600"],
+  .bg-brand-500 {
+    background: linear-gradient(180deg, var(--apple-blue-hover), var(--apple-blue)) !important;
+    color: #fff !important;
+    border-color: rgba(0, 113, 227, 0.35) !important;
+    box-shadow: 0 1px 1px rgba(255, 255, 255, 0.28) inset, 0 10px 24px rgba(0, 113, 227, 0.22) !important;
+  }
+
+  .bg-brand-50,
+  .hover\:bg-brand-50:hover {
+    background-color: var(--apple-blue-soft) !important;
+  }
+
+  .text-brand-500,
+  .text-brand-600,
+  .hover\:text-brand-600:hover {
+    color: var(--apple-blue) !important;
+  }
+
+  .border-brand-200,
+  .focus\:border-brand-400:focus {
+    border-color: rgba(0, 113, 227, 0.26) !important;
+  }
+
+  .focus\:ring-brand-100:focus {
+    --tw-ring-color: rgba(0, 113, 227, 0.18) !important;
+  }
+
+  input,
+  textarea,
+  select {
+    min-height: 38px;
+    background: rgba(255, 255, 255, 0.82) !important;
+    border-color: var(--apple-line) !important;
+    color: var(--apple-text) !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.035);
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    border-color: rgba(0, 113, 227, 0.5) !important;
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.13), inset 0 1px 2px rgba(0, 0, 0, 0.035) !important;
+  }
+
+  .grid.grid-cols-1 {
+    gap: clamp(14px, 1.4vw, 20px) !important;
+  }
+
+  .grid.grid-cols-1 > template + div,
+  .grid.grid-cols-1 > div.bg-white,
+  .grid.grid-cols-1 > div[class*="bg-white"] {
+    border-color: rgba(255, 255, 255, 0.72) !important;
+    box-shadow: var(--apple-shadow-sm);
+  }
+
+  [x-ref="projectListScroll"] .grid > div,
+  [x-show*="currentView === 'templates'"] .grid > div {
+    padding: clamp(18px, 1.5vw, 24px) !important;
+  }
+
+  [x-ref="projectListScroll"] h3 {
+    font-size: 16px !important;
+    line-height: 1.35 !important;
+  }
+
+  [x-ref="projectListScroll"] .group:hover {
+    transform: translateY(-3px) !important;
+    border-color: rgba(0, 113, 227, 0.2) !important;
+  }
+
+  .app-project-header {
+    min-height: 68px;
+    padding: 12px clamp(18px, 2vw, 30px) !important;
+    gap: 16px !important;
+  }
+
+  .app-project-header .app-brand-lockup {
+    gap: 12px !important;
+  }
+
+  .app-project-header .app-page-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .app-project-header .app-page-title span:first-child {
+    font-size: 17px;
+    line-height: 1.2;
+  }
+
+  .app-project-header .app-page-title span:last-child {
+    font-size: 11px;
+    color: var(--apple-muted);
+  }
+
+  .app-project-stats {
+    align-items: center;
+    padding: 7px 10px;
+    border: 1px solid rgba(29, 29, 31, 0.08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.58);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  }
+
+  .app-primary-actions button {
+    height: 34px !important;
+    padding-left: 13px !important;
+    padding-right: 13px !important;
+  }
+
+  .app-secondary-actions button {
+    height: 34px !important;
+  }
+
+  .app-project-grid {
+    width: min(100%, 1180px);
+    margin: 0 auto;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 360px)) !important;
+    justify-content: start;
+    align-items: stretch;
+  }
+
+  .app-project-card {
+    min-height: 216px;
+    padding: 22px !important;
+  }
+
+  .app-project-card h3 {
+    letter-spacing: 0;
+  }
+
+  .app-project-card .app-card-actions {
+    min-height: 38px;
+  }
+
+  .fixed.inset-0 > .bg-white {
+    background: var(--apple-panel-strong) !important;
+    border-color: rgba(255, 255, 255, 0.68) !important;
+    border-radius: var(--apple-radius-2xl) !important;
+    box-shadow: var(--apple-shadow-md) !important;
+    backdrop-filter: saturate(180%) blur(24px);
+  }
+
+  @media (max-width: 760px) {
+    body > nav {
+      height: auto !important;
+      min-height: 58px;
+      flex-wrap: wrap;
+      padding: 10px 14px !important;
+    }
+
+    header {
+      min-height: 54px;
+      padding-left: 14px !important;
+      padding-right: 14px !important;
+      overflow-x: visible;
+    }
+
+    .app-project-header {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px 12px !important;
+      padding-top: 10px !important;
+      padding-bottom: 10px !important;
+    }
+
+    .app-project-header > .flex-1 {
+      display: none !important;
+    }
+
+    .app-project-header .app-brand-lockup {
+      min-width: 0;
+    }
+
+    .app-project-header .app-brand-lockup .h-8 {
+      height: 32px !important;
+      width: 32px !important;
+    }
+
+    .app-project-header .app-page-title span:last-child {
+      display: none;
+    }
+
+    .app-project-header .app-project-stats {
+      grid-column: 1 / -1;
+      order: 3;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      justify-content: flex-start;
+      gap: 10px !important;
+      padding-bottom: 2px;
+    }
+
+    .app-project-header .app-primary-actions {
+      order: 2;
+      justify-self: end;
+      min-width: max-content;
+    }
+
+    .app-project-header .app-secondary-actions {
+      grid-column: 1 / -1;
+      order: 4;
+      width: 100%;
+      overflow-x: auto;
+      justify-content: flex-start;
+      margin-left: 0 !important;
+    }
+
+    .app-project-grid {
+      width: 100%;
+      grid-template-columns: minmax(0, 1fr) !important;
+      justify-content: stretch;
+    }
+
+    .app-project-card {
+      min-height: 208px;
+    }
+
+    .apple-auth-card {
+      border-radius: 24px !important;
+      padding: 22px !important;
+    }
+  }
+
   .timeline-flash { animation: timelineFlash 1s ease-out; }
   .reason-chip-running { animation: reasonChipGlow 1.8s ease-in-out infinite; }
   .intent-chip-running { animation: intentChipGlow 1.8s ease-in-out infinite; }
@@ -219,7 +613,7 @@
       fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','Inter','Segoe UI','sans-serif'] },
       extend: {
         colors: {
-          brand: { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' }
+          brand: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#0071e3',600:'#006edb',700:'#005bbf',800:'#004a99',900:'#003a78' }
         }
       }
     }
@@ -240,17 +634,17 @@
 <!-- Shown only once the session has been checked and the user is not
      authenticated (requirement 5.3). On success the user transitions into the
      authenticated app shell below. -->
-<div x-show="authChecked && !authenticated" x-cloak class="flex-1 flex flex-col items-center justify-center overflow-y-auto p-4 bg-gradient-to-b from-slate-50 to-slate-100">
-  <div class="w-full max-w-sm">
-    <div class="flex flex-col items-center mb-6">
-      <div class="h-12 w-12 rounded-2xl border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden mb-3">
+<div x-show="authChecked && !authenticated" x-cloak class="apple-auth flex-1 flex flex-col items-center justify-center overflow-y-auto p-4 bg-gradient-to-b from-slate-50 to-slate-100">
+  <div class="w-full max-w-[420px]">
+    <div class="flex flex-col items-center mb-7">
+      <div class="h-14 w-14 rounded-2xl border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden mb-4">
         <img src="/static/favicon.svg" alt="" class="w-7 h-7 block">
       </div>
-      <h1 class="text-lg font-semibold text-slate-700 tracking-tight">Rabbit</h1>
+      <h1 class="text-[28px] font-semibold text-slate-700 tracking-tight leading-none">Rabbit</h1>
       <p class="text-sm text-slate-400 mt-1" x-text="authMode === 'register' ? '创建账号' : '登录以继续'"></p>
     </div>
 
-    <div class="bg-white rounded-2xl shadow-sm border border-slate-200/60 p-6">
+    <div class="apple-auth-card bg-white rounded-2xl shadow-sm border border-slate-200/60 p-7">
       <!-- Mode toggle: Sign In / Register -->
       <div class="flex rounded-xl border border-slate-200 overflow-hidden mb-5 text-sm">
         <button type="button" @click="switchAuthMode('login')"
@@ -338,15 +732,18 @@
 
 <!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
 <div x-show="authChecked && authenticated && view === 'list' && currentView === 'projects'" x-cloak class="flex-1 flex flex-col overflow-hidden">
-  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
-    <div class="flex items-center gap-2.5 min-w-0">
+  <header class="app-project-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="app-brand-lockup flex items-center gap-2.5 min-w-0">
       <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
         <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
       </div>
-      <span class="font-semibold text-slate-700 tracking-tight">Rabbit</span>
+      <div class="app-page-title">
+        <span class="font-semibold text-slate-700 tracking-tight">项目</span>
+        <span>探索工作区</span>
+      </div>
     </div>
     <div class="flex-1"></div>
-    <div class="flex items-center gap-3 text-[11px] text-slate-400">
+    <div class="app-project-stats flex items-center gap-3 text-[11px] text-slate-400">
       <span class="inline-flex items-center gap-1.5 shrink-0" title="全部项目">
         <span class="font-medium uppercase tracking-[0.12em] text-slate-400">全部</span>
         <span class="font-semibold text-slate-600 tabular-nums" x-text="projects.length"></span>
@@ -372,13 +769,13 @@
         <span x-text="isStoppingAllProjects ? '正在停止...' : '停止运行中'"></span>
       </button>
     </div>
-    <div class="flex items-center gap-1.5">
+    <div class="app-primary-actions flex items-center gap-1.5">
       <button @click="showNewProject = true" class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 hover:bg-brand-50 transition inline-flex items-center gap-1.5">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
         新建项目
       </button>
     </div>
-    <div class="flex items-center gap-1.5 ml-1">
+    <div class="app-secondary-actions flex items-center gap-1.5 ml-1">
       <button @click="showLocalPrefs = true" class="h-7 max-w-40 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center shrink-0">
         <span class="truncate block" x-text="actorName()"></span>
       </button>
@@ -397,10 +794,10 @@
       </div>
     </template>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+    <div class="app-project-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
       <template x-for="p in projects" :key="p.id">
         <div @click="openProject(p.id)"
-          class="group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
+          class="app-project-card group h-full flex flex-col bg-white rounded-2xl border border-slate-200/60 p-5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-slate-200/50 hover:border-slate-300 hover:-translate-y-0.5">
           <div class="flex items-start justify-between mb-3">
             <span class="text-[11px] font-mono text-slate-400 tracking-wide" x-text="p.id"></span>
             <span class="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-[0.12em]"
@@ -463,7 +860,7 @@
             <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M8 2v3M16 2v3"/><path d="M3.5 9.5h17"/><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M8 13h3M8 16h6"/></svg>
             <span x-text="formatDate(p.created_at)"></span>
           </div>
-          <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-end gap-1.5">
+          <div class="app-card-actions mt-3 pt-3 border-t border-slate-100 flex items-center justify-end gap-1.5">
             <div class="flex items-center justify-end gap-1.5 flex-wrap">
               <button type="button" @click.stop="viewProjectYaml(p.id, p.title)"
                 class="px-2 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition flex items-center gap-1">
@@ -3710,9 +4107,9 @@ function cairnApp() {
     graphStyles() {
       const common = { 'text-valign':'center','text-halign':'center','font-family':'-apple-system,BlinkMacSystemFont,Inter,sans-serif' };
       return [
-        { selector: 'node[nodeType="origin"]', style: { ...common, shape:'round-rectangle','background-color':'#14b8a6',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
-        { selector: 'node[nodeType="goal"]', style: { ...common, shape:'round-rectangle','background-color':'#f43f5e',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
-        { selector: 'node[nodeType="fact"]', style: { ...common, shape:'round-rectangle','background-color':'#6366f1',label:'data(label)',color:'#fff','font-size':'10px','font-weight':'bold','text-wrap':'wrap','text-max-width':'116px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
+        { selector: 'node[nodeType="origin"]', style: { ...common, shape:'round-rectangle','background-color':'#34c759',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
+        { selector: 'node[nodeType="goal"]', style: { ...common, shape:'round-rectangle','background-color':'#ff3b30',label:'data(label)',color:'#fff','font-size':'11px','font-weight':'bold','text-wrap':'wrap','text-max-width':'92px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
+        { selector: 'node[nodeType="fact"]', style: { ...common, shape:'round-rectangle','background-color':'#0071e3',label:'data(label)',color:'#fff','font-size':'10px','font-weight':'bold','text-wrap':'wrap','text-max-width':'116px','text-overflow-wrap':'anywhere',width:'data(width)',height:'data(height)','border-width':0 }},
         { selector: 'node[nodeType="in_progress"]', style: { ...common, shape:'ellipse','background-color':'#f59e0b','background-opacity':0.8,label:'?',color:'#fff','font-size':'11px','font-weight':'bold',width:22,height:22,'border-width':2,'border-color':'#d97706' }},
         { selector: 'node[nodeType="unclaimed"]', style: { ...common, shape:'ellipse','background-color':'#cbd5e1','background-opacity':0.5,label:'?',color:'#94a3b8','font-size':'11px','font-weight':'bold',width:20,height:20,'border-width':1.5,'border-color':'#94a3b8','border-style':'dashed' }},
         { selector: 'node[nodeType="bootstrap_pending"]', style: { ...common, shape:'round-rectangle','background-color':'#fff7ed','background-opacity':0.96,label:'data(label)',color:'#c2410c','font-size':'10px','font-weight':'bold',width:'data(width)',height:'data(height)','border-width':1.5,'border-color':'#fdba74','border-style':'dashed','text-wrap':'wrap','text-max-width':'70px' }},
@@ -3727,7 +4124,7 @@ function cairnApp() {
 
         { selector: '.highlight', style: { 'z-index':999 }},
         { selector: 'edge.highlight', style: { 'z-index':999 }},
-        { selector: 'node.focus', style: { 'border-width':3,'border-color':'#312e81','border-opacity':0.95,'z-index':1000 }},
+        { selector: 'node.focus', style: { 'border-width':3,'border-color':'#0a84ff','border-opacity':0.95,'z-index':1000 }},
         { selector: 'edge.focus', style: { 'z-index':1000,'overlay-color':'#93c5fd','overlay-opacity':0.22,'overlay-padding':5 }},
         { selector: 'node.selected-fact', style: { 'border-width':0,'underlay-color':'#93c5fd','underlay-padding':8,'underlay-opacity':0.28,'z-index':1001 }},
         { selector: '.faded', style: { opacity:0.5 }},
