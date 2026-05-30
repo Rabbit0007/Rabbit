@@ -1,64 +1,73 @@
 # Rabbit
 
-![Rabbit banner](README/banner.png)
+![Rabbit banner](README/rabbit-banner.png)
 
-Rabbit 是一个面向智能渗透测试与协作探索的产品化平台。项目基于事实图协议组织探索过程：从 `Origin` 出发，多个 Worker/Agent 围绕同一张图声明 `Intent`、写回 `Fact`、补充 `Hint`，直到目标 `Goal` 被证明完成。
+Rabbit 是一个面向智能渗透测试的事实图协作平台。它把一次测试任务拆成可追溯的探索图：人和 Agent 共享同一个工作面，从起点事实出发，声明探索方向，写回确认事实，持续收敛到目标证明和漏洞报告。
 
-本仓库在 [oritera/Cairn](https://github.com/oritera/Cairn) 的事实图协作探索思想和基础工程之上继续开发，补充了更完整的 Web 产品界面、账号体系、漏洞报告、Worker 监控、模板和时间线等能力。
+这个项目不是简单换皮。Rabbit 在事实图协议、调度器、Web 产品界面和安全测试工作流上做了自己的实现与扩展；对上游灵感来源的说明放在文末“致谢”，正文统一使用 Rabbit 的产品语义。
 
-## 截图
+## 产品预览
 
-### 登录与会话
+### 登录页
 
 ![Rabbit login](README/rabbit-login.png)
 
-### 工作台
+### 项目工作台
 
 ![Rabbit workspace](README/rabbit-workspace.png)
 
-### 事实图探索视图
+## Rabbit 解决什么问题
 
-![Fact graph](README/cairn.png)
+传统自动化扫描很容易得到一堆离散结果，但难以回答三个问题：
 
-## 核心能力
+- 这个结论从哪里来？
+- 下一步为什么要这么做？
+- 最后报告里的漏洞证据链是否可复盘？
 
-- 事实图探索：用 `Project / Fact / Intent / Hint` 表达问题起点、目标、探索动作和辅助提示。
-- 多 Agent 调度：Dispatcher 负责选择 Worker、维护任务心跳、处理超时、把结构化结果写回 Server。
-- 项目生命周期：支持 active、stopped、completed、reopen 等状态，停止项目会阻断新任务并取消本地运行中的探索。
-- 用户认证：支持注册、登录、登出、改密、服务端 Session、HTTP-only Cookie 与登录失败限流。
-- 漏洞报告：从项目事实中聚合安全发现，按 Critical、High、Medium、Low 等级分类，并支持过滤与导出。
-- Worker 工作台：展示 Worker 类型、状态、任务历史、心跳和执行指标。
-- 项目模板：内置 Web 应用评估、内网渗透、外网渗透、CTF 挑战等模板，也支持自定义模板。
-- 攻击时间线：按时间顺序展示事实发现、意图声明、意图结论和项目完成过程。
-- Web UI：单页应用，包含项目、漏洞报告、工作节点、模板、图谱详情、提示和日志面板。
+Rabbit 用事实图把这些过程显式记录下来：
 
-## 架构概览
+- `Origin`：项目起点，例如目标范围、入口地址、初始约束。
+- `Goal`：项目目标，例如拿到 flag、确认入口风险、完成某类评估。
+- `Fact`：已经确认的事实，只追加，不覆盖历史。
+- `Intent`：从一个或多个事实出发的探索动作。
+- `Hint`：人工或系统补充的策略提示，不直接进入事实链。
+
+这样，Agent 的每一步动作都有上下文，人的每一次介入也能落在同一个工作面上。
+
+## 核心功能
+
+- 项目管理：创建、停止、恢复、完成、重开和删除项目。
+- 事实图视图：以图谱方式展示 Origin、Goal、Fact、Intent 和它们之间的因果关系。
+- 人机协作：人可以补充 Hint、创建 Intent、查看 Agent 产出的事实。
+- Agent 调度：Dispatcher 负责把项目状态转成 `bootstrap`、`reason`、`explore` 三类任务。
+- Worker 管理：查看 Worker 状态、任务历史、心跳和执行指标。
+- 漏洞报告：从项目事实中提取漏洞，按严重级别聚合、过滤和导出。
+- 项目模板：内置 Web、内网、外网、CTF 等常见任务模板，支持保存自定义模板。
+- 攻击时间线：按时间顺序复盘事实发现、意图结论和项目完成过程。
+- 账号体系：支持注册、登录、退出、改密、服务端 Session 和登录失败限流。
+
+## 架构
 
 ```mermaid
 flowchart LR
-    UI["Rabbit Web UI"] --> API["Cairn/Rabbit Server"]
-    API --> DB[("SQLite")]
-    Dispatcher["Dispatcher"] --> API
-    Dispatcher --> Containers["Project Containers"]
-    Containers --> Workers["Worker / Agent CLI"]
-    Workers --> Dispatcher
+    Browser["Rabbit Web UI"] --> Server["Rabbit Server"]
+    Server --> Store[("SQLite")]
+    Dispatcher["Rabbit Dispatcher"] --> Server
+    Dispatcher --> Runtime["Project Container"]
+    Runtime --> Agent["Worker / Agent CLI"]
+    Agent --> Runtime
 ```
 
-### Server
+Rabbit 由四部分组成：
 
-Server 是协议真相源，负责保存项目、事实、意图、提示、模板、漏洞和用户 Session，并提供 FastAPI 接口与静态前端页面。
-
-### Dispatcher
-
-Dispatcher 是执行控制面。它读取项目图，选择任务类型，调度 Worker，在项目容器内启动 Agent，并把 Agent 输出解析为结构化事实或状态变更。
-
-### Worker / Agent
-
-Worker 不直接写协议接口，而是接受 Dispatcher 渲染后的任务 Prompt，完成 `bootstrap`、`reason` 或 `explore` 任务后返回 JSON，由 Dispatcher 负责写回。
+- Web UI：项目操作、图谱查看、漏洞报告、Worker 面板和模板管理。
+- Server：FastAPI 服务，负责协议接口、认证、数据存储和静态页面。
+- Dispatcher：调度控制面，负责选择 Worker、维持心跳、处理超时和写回结果。
+- Project Container：每个项目独立的执行环境，承载安全测试工具和 Agent CLI。
 
 ## 快速启动
 
-### 本地开发
+### 本地运行
 
 ```bash
 cd cairn
@@ -66,13 +75,15 @@ uv sync
 uv run cairn serve --host 127.0.0.1 --port 8765 --log-level info
 ```
 
-访问：
+打开：
 
 ```text
 http://127.0.0.1:8765/
 ```
 
-默认 SQLite 数据库位置：
+说明：当前 Python 包和 CLI 仍保留 `cairn` 目录/命令名，这是为了兼容现有工程结构；产品和文档层面使用 Rabbit。
+
+默认数据库：
 
 ```text
 ~/.local/share/cairn/cairn.db
@@ -84,12 +95,9 @@ http://127.0.0.1:8765/
 docker compose up --build
 ```
 
-Compose 会启动：
+Compose 会启动 Rabbit Web/API 服务和 Rabbit 调度器。服务名仍沿用当前工程里的 compose 配置，后续如果重命名工程包，可以再统一调整。
 
-- `cairn-server`：Web/API 服务，默认映射到 `8000`
-- `cairn-dispatcher`：调度器，读取 `dispatch.yaml`
-
-数据默认挂载到：
+数据目录：
 
 ```text
 ./datas/cairn/
@@ -97,38 +105,39 @@ Compose 会启动：
 
 ## Dispatcher 配置
 
-调度配置位于根目录：
+调度配置在仓库根目录：
 
 ```text
 dispatch.yaml
 dispatch_mock.yaml
 ```
 
-常用字段：
+关键字段：
 
-- `server`：Server 地址
-- `runtime.interval`：调度循环间隔
-- `runtime.max_workers`：全局最大并发
-- `runtime.max_running_projects`：同时运行的项目数
-- `container.image`：项目容器镜像
-- `workers[]`：Worker 名称、类型、任务类型、并发和环境变量
+- `server`：Rabbit Server 地址。
+- `runtime.interval`：调度循环间隔。
+- `runtime.max_workers`：全局 Worker 并发上限。
+- `runtime.max_running_projects`：同时运行的项目数。
+- `runtime.max_project_workers`：单项目 Worker 并发上限。
+- `container.image`：项目运行容器镜像。
+- `workers[]`：Worker 名称、类型、任务范围、优先级和环境变量。
 
-生产使用前请把 `dispatch.yaml` 里的模型密钥、服务地址和 Token 替换为自己的配置，不要把真实密钥提交到公开仓库。
+公开仓库前请检查 `dispatch.yaml`，不要提交真实 API Key、Token 或内部服务地址。
 
 ## 目录结构
 
 ```text
 .
-├── cairn/                  # Python 包：Server、Dispatcher、静态前端与测试
-│   ├── src/cairn/server/   # FastAPI 服务、路由、认证、数据模型
-│   ├── src/cairn/dispatcher/ # 调度器、Worker 适配、任务执行链路
-│   └── tests/              # 后端单元测试
-├── container/              # Worker 容器构建文件
-├── docs/specs/             # 协议和调度设计文档
-├── README/                 # README 图片资源
-├── dispatch.yaml           # 真实调度配置示例
-├── dispatch_mock.yaml      # Mock Worker 调度配置
-└── docker-compose.yaml     # Server + Dispatcher 编排
+├── cairn/                    # Rabbit 的 Python 工程目录
+│   ├── src/cairn/server/     # Server、路由、认证、模型和静态前端
+│   ├── src/cairn/dispatcher/ # 调度器、任务模型和 Worker 适配
+│   └── tests/                # 后端测试
+├── container/                # 项目执行容器
+├── docs/specs/               # Rabbit 协议和调度文档
+├── README/                   # README 图片资源
+├── dispatch.yaml             # 调度配置示例
+├── dispatch_mock.yaml        # Mock Worker 配置
+└── docker-compose.yaml       # Server + Dispatcher 编排
 ```
 
 ## 测试
@@ -138,17 +147,18 @@ cd cairn
 uv run python -m pytest
 ```
 
-当前代码里模板标题已中文化，如果本地测试仍保留旧英文断言，`tests/test_templates_router.py` 可能会出现预期标题与实际中文标题不一致的失败。
+如果本地测试仍保留旧英文模板标题断言，而代码返回中文模板标题，`tests/test_templates_router.py` 会出现标题预期不一致的失败。
 
-## 设计文档
+## 文档
 
-- [服务端协议](docs/specs/server-protocol.md)
-- [Dispatcher 设计](docs/specs/dispatcher-design.md)
-- [产品化 UI 需求](.kiro/specs/cairn-product-ui/requirements.md)
+- [Rabbit 协作探索协议](docs/specs/server-protocol.md)
+- [Rabbit Dispatcher 设计](docs/specs/dispatcher-design.md)
 
 ## 致谢
 
-感谢 [oritera/Cairn](https://github.com/oritera/Cairn) 提供的协议思想与基础工程。Rabbit 的事实图探索模型、协作式 Agent 工作流和 Server/Dispatcher 分层都受 Cairn 启发，并在此基础上继续做产品化扩展。
+Rabbit 的事实图协作思路受到 [oritera/Cairn](https://github.com/oritera/Cairn) 启发。感谢原项目对 Fact / Intent / Hint 协作探索模型和 Agent 工作流方向的开源贡献。
+
+本仓库在此基础上继续做 Rabbit 自己的产品化实现，包括 Web 体验、认证体系、漏洞报告、Worker 工作台、模板、时间线和本地化安全测试流程。
 
 ## License
 

@@ -1,3 +1,3 @@
-```
-docker build . -t cairn-worker-container
+```bash
+docker build . -t rabbit-worker-container
 ```

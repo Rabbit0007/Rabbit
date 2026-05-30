@@ -1,8 +1,8 @@
-# Design Document: Cairn Product UI
+# Design Document: Rabbit Product UI
 
 ## Overview
 
-This design transforms Cairn from a developer-oriented single-page exploration tool into a product-grade penetration testing platform. The transformation is **additive** — all existing core functionality (dispatcher, scheduler, worker system, fact-intent graph logic, existing API endpoints) remains unchanged. New capabilities are layered on top through:
+This design transforms Rabbit from a developer-oriented single-page exploration tool into a product-grade penetration testing platform. The transformation is **additive** — all existing core functionality (dispatcher, scheduler, worker system, fact-intent graph logic, existing API endpoints) remains unchanged. New capabilities are layered on top through:
 
 1. **Authentication middleware** wrapping existing routes
 2. **New routers** for vulnerability reports, worker dashboard, templates, and timeline

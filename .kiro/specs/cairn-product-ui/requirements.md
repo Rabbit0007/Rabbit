@@ -2,11 +2,11 @@
 
 ## Introduction
 
-This document defines the requirements for transforming Cairn from a developer-oriented single-page tool into a product-grade penetration testing platform. The transformation adds user authentication, vulnerability reporting, worker monitoring, project templates, and attack timeline visualization to the existing fact-graph exploration engine.
+This document defines the requirements for transforming Rabbit from a developer-oriented single-page tool into a product-grade penetration testing platform. The transformation adds user authentication, vulnerability reporting, worker monitoring, project templates, and attack timeline visualization to the existing fact-graph exploration engine.
 
 ## Glossary
 
-- **Platform**: The Cairn web application including backend API and frontend UI
+- **Platform**: The Rabbit web application including backend API and frontend UI
 - **Auth_Service**: The authentication and session management subsystem
 - **User**: A registered individual with credentials stored in the Platform
 - **Session**: A server-side token representing an authenticated User's active login

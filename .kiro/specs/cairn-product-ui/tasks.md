@@ -1,8 +1,8 @@
-# Implementation Plan: Cairn Product UI
+# Implementation Plan: Rabbit Product UI
 
 ## Overview
 
-This plan transforms Cairn into a product-grade penetration testing platform through additive changes only. No existing core files (dispatcher, scheduler, workers, existing routers) are modified. New routers, database tables, middleware, and frontend views are layered on top of the existing FastAPI + SQLite + Alpine.js architecture.
+This plan transforms Rabbit into a product-grade penetration testing platform through additive changes only. No existing core files (dispatcher, scheduler, workers, existing routers) are modified. New routers, database tables, middleware, and frontend views are layered on top of the existing FastAPI + SQLite + Alpine.js architecture.
 
 Implementation order: authentication system first (all other features depend on it), then vulnerability reports, worker dashboard, templates, attack timeline, and finally navigation/layout integration.
 
