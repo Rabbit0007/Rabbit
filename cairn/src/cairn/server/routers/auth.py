@@ -17,7 +17,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from cairn.server.auth_models import LoginRequest, RegisterRequest, UserResponse
 from cairn.server.db import get_conn
@@ -39,6 +40,11 @@ RATE_LIMIT_WINDOW = timedelta(minutes=15)
 # Cookie name carrying the server-side session token. The auth middleware
 # (task 2.1) reads the token from this cookie.
 SESSION_COOKIE_NAME = "session_token"
+
+# Browsers reject or refuse to resend ``Secure`` cookies on plain HTTP. Keep the
+# production default secure, but allow local HTTP development origins to retain
+# the session cookie when the UI runs at http://127.0.0.1 or http://localhost.
+LOCAL_HTTP_COOKIE_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # Timestamp format used throughout the codebase (see services.utcnow).
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -93,21 +99,27 @@ def _create_session(conn, user_id: str, now: datetime) -> str:
     return token
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
-    """Attach the session token as an HTTP-only, Secure, SameSite=Strict cookie."""
+def cookie_secure_for_request(request: Request) -> bool:
+    """Return whether the session cookie should use the Secure attribute."""
+    host = request.url.hostname or ""
+    return not (request.url.scheme == "http" and host in LOCAL_HTTP_COOKIE_HOSTS)
+
+
+def _set_session_cookie(response: Response, token: str, request: Request) -> None:
+    """Attach the session token as an HTTP-only SameSite=Strict cookie."""
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         max_age=int(SESSION_DURATION.total_seconds()),
         httponly=True,
-        secure=True,
+        secure=cookie_secure_for_request(request),
         samesite="strict",
         path="/",
     )
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
-def register(body: RegisterRequest, response: Response) -> UserResponse:
+def register(body: RegisterRequest, response: Response, request: Request) -> UserResponse:
     """Register a new user.
 
     Input validation (username format and password length) is enforced by the
@@ -146,7 +158,7 @@ def register(body: RegisterRequest, response: Response) -> UserResponse:
 
         token = _create_session(conn, user_id, now)
 
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, request)
     return UserResponse(id=user_id, username=body.username, created_at=created_at)
 
 
@@ -193,7 +205,7 @@ def _record_login_attempt(username_lower: str, now: datetime, success: bool) -> 
 
 
 @router.post("/login", response_model=UserResponse)
-def login(body: LoginRequest, response: Response) -> UserResponse:
+def login(body: LoginRequest, response: Response, request: Request) -> UserResponse:
     """Authenticate a user and create a session.
 
     The :class:`LoginRequest` model guarantees both fields are present and
@@ -251,7 +263,7 @@ def login(body: LoginRequest, response: Response) -> UserResponse:
         )
         token = _create_session(conn, user["id"], now)
 
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, request)
     return UserResponse(
         id=user["id"], username=user["username"], created_at=user["created_at"]
     )
@@ -266,13 +278,10 @@ def login(body: LoginRequest, response: Response) -> UserResponse:
 # below are deliberately scoped to this section for the same reason.
 # ---------------------------------------------------------------------------
 
-from fastapi import Request  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
-
 from cairn.server.auth_models import PasswordChangeRequest  # noqa: E402
 
 
-def _clear_session_cookie(response: Response) -> None:
+def _clear_session_cookie(response: Response, request: Request) -> None:
     """Remove the session cookie, matching the attributes used when setting it.
 
     Used on logout (requirement 3.3) and when rejecting requests carrying an
@@ -282,18 +291,18 @@ def _clear_session_cookie(response: Response) -> None:
         key=SESSION_COOKIE_NAME,
         path="/",
         httponly=True,
-        secure=True,
+        secure=cookie_secure_for_request(request),
         samesite="strict",
     )
 
 
-def _unauthorized_response() -> JSONResponse:
+def _unauthorized_response(request: Request) -> JSONResponse:
     """Build a 401 response that also clears the (invalid) session cookie."""
     response = JSONResponse(
         status_code=401,
         content={"detail": "Authentication required"},
     )
-    _clear_session_cookie(response)
+    _clear_session_cookie(response, request)
     return response
 
 
@@ -339,7 +348,7 @@ def logout(request: Request) -> Response:
         with get_conn() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
     response = Response(status_code=204)
-    _clear_session_cookie(response)
+    _clear_session_cookie(response, request)
     return response
 
 
@@ -356,7 +365,7 @@ def me(request: Request):
     with get_conn() as conn:
         user = _authenticate_session(conn, token, now)
     if user is None:
-        return _unauthorized_response()
+        return _unauthorized_response(request)
     return UserResponse(
         id=user["id"],
         username=user["username"],
@@ -381,7 +390,7 @@ def change_password(body: PasswordChangeRequest, request: Request) -> Response:
     with get_conn() as conn:
         user = _authenticate_session(conn, token, now)
         if user is None:
-            return _unauthorized_response()
+            return _unauthorized_response(request)
 
         current_ok = verify_password(body.current_password, user["password_hash"])
         if not current_ok:

@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 
 from cairn.server import db
 from cairn.server.routers.auth import SESSION_COOKIE_NAME, SESSION_DURATION
@@ -80,6 +81,23 @@ def test_register_valid_returns_201_user_and_sets_secure_cookie(client):
 
     # The cookie is retained by the client jar (https origin) for future calls.
     assert SESSION_COOKIE_NAME in client.cookies
+
+
+def test_local_http_register_keeps_session_cookie(auth_app):
+    local_client = TestClient(auth_app, base_url="http://127.0.0.1")
+
+    response = register(local_client)
+
+    assert response.status_code == 201
+    raw_cookie = _session_set_cookie(response)
+    assert raw_cookie is not None
+    lowered = raw_cookie.lower()
+    assert "httponly" in lowered
+    assert "secure" not in lowered
+    assert "samesite=strict" in lowered
+
+    assert SESSION_COOKIE_NAME in local_client.cookies
+    assert local_client.get("/api/auth/me").status_code == 200
 
 
 def test_register_persists_bcrypt_hash_cost_at_least_12(client):

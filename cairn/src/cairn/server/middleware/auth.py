@@ -54,7 +54,11 @@ from fastapi import Request, Response
 from fastapi.exceptions import HTTPException
 
 from cairn.server.db import get_conn
-from cairn.server.routers.auth import SESSION_COOKIE_NAME, SESSION_DURATION
+from cairn.server.routers.auth import (
+    SESSION_COOKIE_NAME,
+    SESSION_DURATION,
+    cookie_secure_for_request,
+)
 
 # Path the browser is redirected to when an unauthenticated navigation request is
 # made. The frontend serves its login view from the root path.
@@ -157,7 +161,7 @@ def _has_valid_internal_token(request: Request) -> bool:
     return secrets.compare_digest(presented, configured)
 
 
-def _clear_cookie_header() -> str:
+def _clear_cookie_header(request: Request) -> str:
     """Build a ``Set-Cookie`` header value that clears the session cookie.
 
     Uses a throwaway :class:`Response` so the cleared cookie matches exactly the
@@ -169,7 +173,7 @@ def _clear_cookie_header() -> str:
         key=SESSION_COOKIE_NAME,
         path="/",
         httponly=True,
-        secure=True,
+        secure=cookie_secure_for_request(request),
         samesite="strict",
     )
     return scratch.headers["set-cookie"]
@@ -183,7 +187,7 @@ def _reject(request: Request) -> "HTTPException":
     5.4). In both cases the stale session cookie is cleared (requirements 3.2,
     3.6).
     """
-    headers = {"set-cookie": _clear_cookie_header()}
+    headers = {"set-cookie": _clear_cookie_header(request)}
     accept = request.headers.get("accept", "")
     if "text/html" in accept:
         headers["location"] = LOGIN_PATH
@@ -275,7 +279,7 @@ def require_auth(request: Request, response: Response) -> sqlite3.Row:
         value=token,
         max_age=int(SESSION_DURATION.total_seconds()),
         httponly=True,
-        secure=True,
+        secure=cookie_secure_for_request(request),
         samesite="strict",
         path="/",
     )
