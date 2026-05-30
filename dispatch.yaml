@@ -1,0 +1,83 @@
+# Cairn server API endpoint.
+server: "http://cairn-server:8000"
+
+# Shared environment variables merged into every worker.
+common_env:
+  TSEC_SERVER_HOST: "10.0.0.44:8000"
+  TSEC_AGENT_TOKEN: "xxx"
+
+runtime:
+  # Scheduler tick interval in seconds.
+  interval: 3
+  # Global concurrency cap across all workers and all projects.
+  max_workers: 8
+  # Maximum number of projects that may be actively scheduled at the same time.
+  max_running_projects: 3
+  # Per-project worker cap. Prevents one project from monopolizing the whole dispatcher.
+  max_project_workers: 4
+  # Healthcheck timeout for each worker process before a task is assigned.
+  healthcheck_timeout: 20
+  # Prompt set loaded from cairn/src/cairn/dispatcher/prompts/.
+  prompt_group: "default"
+
+tasks:
+  bootstrap:
+    # Main execution timeout for the initial direct solve attempt.
+    timeout: 300
+    # Time budget for conclude fallback after the main phase times out or returns unusable output.
+    conclude_timeout: 90
+  reason:
+    # Reason decides whether the goal is met and whether new intents should be proposed.
+    timeout: 300
+    # Hard cap on how many new intents one reason step may create.
+    max_intents: 2
+  explore:
+    # Main execution timeout for exploring a claimed intent.
+    timeout: 300
+    # Time budget for conclude fallback used to summarize confirmed findings from the same session.
+    conclude_timeout: 90
+
+container:
+  # Base worker container. The dispatcher execs agent commands inside one container per project.
+  image: "ghcr.io/oritera/cairn-worker-container:latest"
+  network_mode: "host"
+  # "stop" keeps finished containers for inspection; "remove" is cleaner but loses post-run state.
+  completed_action: "stop"
+  # Add Linux capabilities only when a task truly needs them, such as packet crafting or network admin actions.
+  # cap_add:
+  #   - "NET_RAW"
+  #   - "NET_ADMIN"
+
+
+workers:
+  # Worker priority is ascending: lower numbers are preferred first.
+  # max_running is per-worker concurrency. Slower backends such as Pi usually benefit from lower values.
+  - name: "claudecode_deepseek-v4-pro"
+    type: "claudecode"
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 0
+    env:
+      ANTHROPIC_MODEL: "deepseek-v4-pro"
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic"
+      ANTHROPIC_AUTH_TOKEN: "sk-6fe8e73dc03247a4a6a102353bd9a009"
+
+  - name: "claudecode_deepseek-v4-pro-2"
+    type: "claudecode"
+    task_types: [bootstrap,reason,explore]
+    max_running: 2
+    priority: 0
+    env:
+      ANTHROPIC_MODEL: "deepseek-v4-pro"
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic"
+      ANTHROPIC_AUTH_TOKEN: "sk-6fe8e73dc03247a4a6a102353bd9a009"
+
+  - name: "claudecode_deepseek-v4-pro-3"
+    type: "claudecode"
+    task_types: [bootstrap,reason,explore]
+    max_running: 2
+    priority: 0
+    env:
+      ANTHROPIC_MODEL: "deepseek-v4-pro"
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic"
+      ANTHROPIC_AUTH_TOKEN: "sk-6fe8e73dc03247a4a6a102353bd9a009"

@@ -1,0 +1,12 @@
+PASS: app imported cleanly
+/api/workers registered: True
+/api/workers/{name}/history registered: True
+PASS: both workers routes registered
+existing routes still present (/projects, /settings): True
+GET /api/workers/some-worker/history (no auth) -> 401
+GET /projects (no auth) -> 401
+PASS: auth enforced (401) on protected routes when token is set
+GET /api/workers/some-worker/history (token unset) -> 200
+PASS: dispatcher pass-through preserved (no 401 when token unset)
+
+ALL CHECKS PASSED
