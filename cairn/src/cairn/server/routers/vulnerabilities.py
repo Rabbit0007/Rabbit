@@ -44,6 +44,48 @@ _SEVERITY_RANK_SQL = (
 )
 
 
+def _decode_json_list(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _vulnerability_select(where_sql: str) -> str:
+    return f"""
+            SELECT
+                v.id          AS id,
+                v.project_id  AS project_id,
+                p.title       AS project_name,
+                v.fact_id     AS fact_id,
+                v.title       AS title,
+                v.description AS description,
+                v.severity    AS severity,
+                v.discovered_at AS discovered_at,
+                v.source_intent_id AS source_intent_id,
+                v.source_intent_description AS source_intent_description,
+                v.source_worker AS source_worker,
+                v.source_fact_ids_json AS source_fact_ids_json,
+                v.evidence_json AS evidence_json,
+                v.process_json AS process_json
+            FROM vulnerabilities v
+            JOIN projects p ON p.id = v.project_id
+            {where_sql}
+            ORDER BY {_SEVERITY_RANK_SQL}, v.discovered_at DESC, v.id
+            """
+
+
+def _row_to_vulnerability(row) -> Vulnerability:
+    data = dict(row)
+    data["source_fact_ids"] = _decode_json_list(data.pop("source_fact_ids_json", None))
+    data["evidence"] = _decode_json_list(data.pop("evidence_json", None))
+    data["process"] = _decode_json_list(data.pop("process_json", None))
+    return Vulnerability(**data)
+
+
 @router.get("", response_model=list[Vulnerability])
 def list_vulnerabilities(
     severity: Severity | None = Query(
@@ -96,26 +138,9 @@ def list_vulnerabilities(
             if exists is None:
                 raise HTTPException(status_code=404, detail="Project not found")
 
-        rows = conn.execute(
-            f"""
-            SELECT
-                v.id          AS id,
-                v.project_id  AS project_id,
-                p.title       AS project_name,
-                v.fact_id     AS fact_id,
-                v.title       AS title,
-                v.description AS description,
-                v.severity    AS severity,
-                v.discovered_at AS discovered_at
-            FROM vulnerabilities v
-            JOIN projects p ON p.id = v.project_id
-            {where_sql}
-            ORDER BY {_SEVERITY_RANK_SQL}, v.discovered_at DESC, v.id
-            """,
-            params,
-        ).fetchall()
+        rows = conn.execute(_vulnerability_select(where_sql), params).fetchall()
 
-    return [Vulnerability(**dict(row)) for row in rows]
+    return [_row_to_vulnerability(row) for row in rows]
 
 
 @router.get("/summary", response_model=VulnerabilitySummary)
@@ -191,26 +216,9 @@ def _query_filtered_vulnerabilities(
             if exists is None:
                 raise HTTPException(status_code=404, detail="Project not found")
 
-        rows = conn.execute(
-            f"""
-            SELECT
-                v.id          AS id,
-                v.project_id  AS project_id,
-                p.title       AS project_name,
-                v.fact_id     AS fact_id,
-                v.title       AS title,
-                v.description AS description,
-                v.severity    AS severity,
-                v.discovered_at AS discovered_at
-            FROM vulnerabilities v
-            JOIN projects p ON p.id = v.project_id
-            {where_sql}
-            ORDER BY {_SEVERITY_RANK_SQL}, v.discovered_at DESC, v.id
-            """,
-            params,
-        ).fetchall()
+        rows = conn.execute(_vulnerability_select(where_sql), params).fetchall()
 
-    return [Vulnerability(**dict(row)) for row in rows]
+    return [_row_to_vulnerability(row) for row in rows]
 
 
 def _summarize(vulnerabilities: list[Vulnerability]) -> dict[str, int]:

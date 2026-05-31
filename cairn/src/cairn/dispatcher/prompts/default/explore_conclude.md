@@ -23,6 +23,7 @@ Normal return example:
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- All user-facing JSON string fields, especially `description`, must be written in Simplified Chinese. Keep URLs, file paths, commands, payload names, CVE IDs, ports, credentials, and other exact technical identifiers unchanged.
 
 # Context
 ## Graph

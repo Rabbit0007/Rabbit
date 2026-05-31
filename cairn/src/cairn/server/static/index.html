@@ -1876,16 +1876,19 @@
       </button>
       <div class="flex-1"></div>
       <span class="text-[11px] text-slate-400 pb-2">
+        <span class="font-semibold text-slate-600 tabular-nums" x-text="vulnProjectGroups().length"></span>
+        <span>个项目</span>
+        <span class="mx-1 text-slate-300">/</span>
         <span class="font-semibold text-slate-600 tabular-nums" x-text="vulnItems.length"></span>
-        <span x-text="vulnItems.length === 1 ? '条结果' : '条结果'"></span>
+        <span>条漏洞</span>
       </span>
     </div>
 
-    <!-- Findings table (requirement 6.3) -->
-    <div class="bg-white rounded-2xl border border-slate-200/60 overflow-hidden">
+    <!-- Project-grouped finding folders (requirement 6.3) -->
+    <div class="space-y-3">
       <!-- Loading state -->
       <template x-if="vulnLoading && vulnItems.length === 0">
-        <div class="flex items-center justify-center gap-2 py-16 text-slate-400 text-sm">
+        <div class="bg-white rounded-2xl border border-slate-200/60 flex items-center justify-center gap-2 py-16 text-slate-400 text-sm">
           <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"></path></svg>
           <span>正在加载漏洞…</span>
         </div>
@@ -1893,38 +1896,144 @@
 
       <!-- Empty state (requirement 7.4) -->
       <template x-if="!vulnLoading && vulnItems.length === 0">
-        <div class="flex flex-col items-center justify-center py-16 text-slate-400">
+        <div class="bg-white rounded-2xl border border-slate-200/60 flex flex-col items-center justify-center py-16 text-slate-400">
           <svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" stroke-width="1.4" viewBox="0 0 24 24"><path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
           <p class="text-sm font-medium text-slate-500">没有匹配的漏洞</p>
           <p class="text-xs mt-1" x-text="(vulnFilters.severity || vulnFilters.project_id) ? '请尝试调整或清除筛选条件。' : '尚未发现任何漏洞。'"></p>
         </div>
       </template>
 
-      <!-- Data table -->
-      <table x-show="vulnItems.length > 0" class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-slate-100 text-left">
-            <th class="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">标题</th>
-            <th class="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 w-32">严重程度</th>
-            <th class="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 w-56">项目</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-for="v in vulnItems" :key="v.id">
-            <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50/60 transition">
-              <td class="px-4 py-3 text-slate-700 break-words [overflow-wrap:anywhere]">
-                <span x-text="v.title"></span>
-              </td>
-              <td class="px-4 py-3">
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.1em] border"
-                  :class="vulnSeverityBadgeClass(v.severity)"
-                  x-text="vulnSeverityLabel(v.severity)"></span>
-              </td>
-              <td class="px-4 py-3 text-slate-500 break-words [overflow-wrap:anywhere]" x-text="v.project_name"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
+      <!-- Project folders -->
+      <div x-show="vulnItems.length > 0" class="space-y-3">
+        <template x-for="group in vulnProjectGroups()" :key="group.project_id">
+          <section class="bg-white rounded-2xl border border-slate-200/70 overflow-hidden shadow-sm shadow-slate-200/30">
+            <button type="button" @click="toggleVulnProject(group.project_id)"
+              class="w-full px-4 py-4 lg:px-5 flex flex-col lg:flex-row lg:items-center gap-3 text-left hover:bg-slate-50/70 transition">
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <span class="h-11 w-11 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center shrink-0">
+                  <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h3.3c.63 0 1.23.26 1.65.72l1.05 1.16c.43.47 1.02.74 1.66.74H18a2.25 2.25 0 0 1 2.25 2.25v7.88A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25V6.75Z"/></svg>
+                </span>
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="text-base font-semibold text-slate-800 break-words [overflow-wrap:anywhere]" x-text="group.project_name"></h3>
+                    <span class="text-xs font-mono text-slate-400" x-text="group.project_id"></span>
+                  </div>
+                  <p class="mt-1 text-xs text-slate-400">
+                    <span class="font-semibold text-slate-600 tabular-nums" x-text="group.items.length"></span>
+                    <span>条漏洞</span>
+                    <span class="mx-1 text-slate-300">·</span>
+                    <span>最新发现</span>
+                    <span class="tabular-nums" x-text="group.latest || '未记录'"></span>
+                  </p>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 lg:justify-end">
+                <template x-for="level in ['critical','high','medium','low']" :key="level">
+                  <span x-show="group.counts[level] > 0"
+                    class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.1em] border"
+                    :class="vulnSeverityBadgeClass(level)">
+                    <span x-text="vulnSeverityLabel(level)"></span>
+                    <span class="ml-1 tabular-nums" x-text="group.counts[level]"></span>
+                  </span>
+                </template>
+                <span class="h-8 w-8 rounded-full border border-slate-200 bg-white flex items-center justify-center text-slate-500 shrink-0">
+                  <svg class="w-4 h-4 transition" :class="vulnProjectExpanded[group.project_id] ? 'rotate-180' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+                </span>
+              </div>
+            </button>
+
+            <div x-show="vulnProjectExpanded[group.project_id]" class="border-t border-slate-100 bg-slate-50/40">
+              <div class="px-4 lg:px-5 py-3 flex items-center justify-between gap-3">
+                <p class="text-xs font-semibold text-slate-500">项目漏洞列表</p>
+                <p class="text-[11px] text-slate-400">点开单条漏洞查看证据和过程</p>
+              </div>
+
+              <div class="divide-y divide-slate-100 bg-white">
+                <template x-for="v in group.items" :key="v.id">
+                  <article class="px-4 lg:px-5 py-3">
+                    <button type="button" @click="toggleVulnDetails(v.id)" class="w-full text-left flex flex-col lg:flex-row lg:items-start gap-3">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-2 mb-1.5">
+                          <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.1em] border"
+                            :class="vulnSeverityBadgeClass(v.severity)"
+                            x-text="vulnSeverityLabel(v.severity)"></span>
+                          <span class="text-[11px] text-slate-400 font-mono" x-text="v.fact_id"></span>
+                          <span class="text-[11px] text-slate-400 tabular-nums" x-text="v.discovered_at"></span>
+                        </div>
+                        <h4 class="text-sm lg:text-base font-semibold text-slate-800 leading-snug break-words [overflow-wrap:anywhere]" x-text="v.title"></h4>
+                        <p class="mt-1 text-xs leading-5 text-slate-500 break-words [overflow-wrap:anywhere]" x-text="vulnShort(v.description, 180)"></p>
+                      </div>
+                      <span class="h-8 px-3 rounded-xl border border-slate-200 text-xs text-slate-500 bg-white inline-flex items-center justify-center gap-1.5 shrink-0">
+                        <svg class="w-3.5 h-3.5 transition" :class="vulnExpanded[v.id] ? 'rotate-180' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+                        <span x-text="vulnExpanded[v.id] ? '收起详情' : '查看详情'"></span>
+                      </span>
+                    </button>
+
+                    <div x-show="vulnExpanded[v.id]" class="mt-4 rounded-2xl border border-slate-200/70 bg-slate-50/60 p-4">
+                      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                        <div class="border border-slate-200/70 rounded-xl bg-white px-3 py-2">
+                          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">来源意图</p>
+                          <p class="mt-1 text-sm font-medium text-slate-700 break-words [overflow-wrap:anywhere]" x-text="vulnIntentLabel(v)"></p>
+                        </div>
+                        <div class="border border-slate-200/70 rounded-xl bg-white px-3 py-2">
+                          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">工作节点</p>
+                          <p class="mt-1 text-sm font-medium text-slate-700 break-words [overflow-wrap:anywhere]" x-text="v.source_worker || '未记录'"></p>
+                        </div>
+                        <div class="border border-slate-200/70 rounded-xl bg-white px-3 py-2">
+                          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">过程步数</p>
+                          <p class="mt-1 text-sm font-medium text-slate-700 tabular-nums" x-text="vulnProcessItems(v).length + ' 步'"></p>
+                        </div>
+                      </div>
+
+                      <div class="mb-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">完整描述</p>
+                        <p class="rounded-xl border border-slate-200/70 bg-white px-3 py-2 text-sm leading-6 text-slate-600 break-words [overflow-wrap:anywhere]" x-text="v.description"></p>
+                      </div>
+
+                      <div class="mb-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">关键证据</p>
+                        <div class="space-y-2">
+                          <template x-for="(e, idx) in vulnEvidence(v)" :key="idx">
+                            <div class="rounded-xl border border-slate-200/70 bg-white px-3 py-2 text-sm leading-6 text-slate-600 break-words [overflow-wrap:anywhere]" x-text="e"></div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                          <div>
+                            <p class="text-sm font-semibold text-slate-700">漏洞浮现过程</p>
+                            <p class="text-xs text-slate-400">按项目事实、探索意图、产出事实追溯。</p>
+                          </div>
+                        </div>
+                        <ol class="relative space-y-3">
+                          <template x-for="(step, idx) in vulnProcessItems(v)" :key="idx + '-' + (step.id || '')">
+                            <li class="relative pl-8">
+                              <span class="absolute left-0 top-1 h-5 w-5 rounded-full border flex items-center justify-center text-[10px] font-semibold"
+                                :class="vulnStepClass(step)">
+                                <span x-text="idx + 1"></span>
+                              </span>
+                              <div class="rounded-xl border border-slate-200/70 bg-white px-3 py-2">
+                                <div class="flex flex-wrap items-center gap-2 mb-1">
+                                  <span class="text-[11px] font-semibold text-slate-500" x-text="step.label || (step.type === 'intent' ? '探索意图' : '事实')"></span>
+                                  <span class="text-[11px] text-slate-400 font-mono" x-text="step.id"></span>
+                                  <span class="text-[11px] text-slate-400" x-show="step.worker" x-text="'节点 ' + step.worker"></span>
+                                  <span class="text-[11px] text-slate-400 tabular-nums" x-show="step.time" x-text="step.time"></span>
+                                </div>
+                                <p class="text-sm leading-6 text-slate-600 break-words [overflow-wrap:anywhere]" x-text="step.description || '无描述'"></p>
+                              </div>
+                            </li>
+                          </template>
+                        </ol>
+                      </div>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </div>
+          </section>
+        </template>
+      </div>
     </div>
     </div>
   </div>
@@ -2740,6 +2849,8 @@ function cairnApp() {
     vulnItems: [],
     vulnFilters: { severity: '', project_id: '' },
     vulnLoading: false,
+    vulnProjectExpanded: {},
+    vulnExpanded: {},
     // `vulnExporting` holds the format ('json' | 'csv') currently being
     // exported, or '' when idle, so each export button can show its own
     // in-progress state (task 11.2, requirements 8.1, 8.2).
@@ -2909,6 +3020,7 @@ function cairnApp() {
     async loadVulnerabilities() {
       this.vulnLoading = true;
       try {
+        await this.api('POST', '/api/vulnerabilities/refresh');
         await Promise.all([this.loadVulnSummary(), this.loadVulnList()]);
         this._vulnLoaded = true;
       } finally {
@@ -2942,6 +3054,7 @@ function cairnApp() {
       const qs = params.toString();
       try {
         this.vulnItems = await this.api('GET', '/api/vulnerabilities' + (qs ? '?' + qs : ''));
+        this.pruneVulnExpansionState();
       } catch (e) {
         this.vulnItems = [];
         this.showToast(e.message, 'error');
@@ -3041,6 +3154,103 @@ function cairnApp() {
         case 'low': return '低危';
         default: return severity;
       }
+    },
+
+    toggleVulnDetails(id) {
+      this.vulnExpanded[id] = !this.vulnExpanded[id];
+    },
+
+    toggleVulnProject(id) {
+      this.vulnProjectExpanded[id] = !this.vulnProjectExpanded[id];
+    },
+
+    pruneVulnExpansionState() {
+      const visibleIds = new Set(this.vulnItems.map(v => v.id));
+      const visibleProjects = new Set(this.vulnItems.map(v => v.project_id || '__unknown__'));
+      this.vulnExpanded = Object.fromEntries(
+        Object.entries(this.vulnExpanded).filter(([id]) => visibleIds.has(id))
+      );
+      this.vulnProjectExpanded = Object.fromEntries(
+        Object.entries(this.vulnProjectExpanded).filter(([id]) => visibleProjects.has(id))
+      );
+    },
+
+    vulnProjectGroups() {
+      const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+      const groups = new Map();
+      for (const item of this.vulnItems) {
+        const projectId = item.project_id || '__unknown__';
+        if (!groups.has(projectId)) {
+          groups.set(projectId, {
+            project_id: projectId,
+            project_name: item.project_name || '未命名项目',
+            items: [],
+            counts: { critical: 0, high: 0, medium: 0, low: 0 },
+            topRank: 99,
+            latest: '',
+          });
+        }
+        const group = groups.get(projectId);
+        group.items.push(item);
+        if (group.counts[item.severity] !== undefined) group.counts[item.severity] += 1;
+        group.topRank = Math.min(group.topRank, rank[item.severity] ?? 99);
+        if (!group.latest || (item.discovered_at || '') > group.latest) group.latest = item.discovered_at || group.latest;
+      }
+      const result = Array.from(groups.values());
+      for (const group of result) {
+        group.items.sort((a, b) => {
+          const severityDelta = (rank[a.severity] ?? 99) - (rank[b.severity] ?? 99);
+          if (severityDelta !== 0) return severityDelta;
+          return String(b.discovered_at || '').localeCompare(String(a.discovered_at || ''));
+        });
+      }
+      return result.sort((a, b) => {
+        if (a.topRank !== b.topRank) return a.topRank - b.topRank;
+        return String(b.latest || '').localeCompare(String(a.latest || ''));
+      });
+    },
+
+    vulnShort(text, max = 160) {
+      const value = String(text || '').replace(/\s+/g, ' ').trim();
+      if (value.length <= max) return value;
+      return value.slice(0, max - 1).trimEnd() + '…';
+    },
+
+    vulnProjectLabel(v) {
+      const name = v.project_name || '未命名项目';
+      return v.project_id ? `${name} (${v.project_id})` : name;
+    },
+
+    vulnIntentLabel(v) {
+      if (!v.source_intent_id) return '未记录';
+      const desc = v.source_intent_description ? `：${v.source_intent_description}` : '';
+      return `${v.source_intent_id}${desc}`;
+    },
+
+    vulnEvidence(v) {
+      if (Array.isArray(v.evidence) && v.evidence.length) return v.evidence;
+      return v.description ? [v.description] : ['暂无证据摘要'];
+    },
+
+    vulnProcessItems(v) {
+      if (Array.isArray(v.process) && v.process.length) return v.process;
+      return [
+        {
+          type: 'fact',
+          id: v.fact_id,
+          label: '产出事实',
+          description: v.description || v.title || '无描述',
+          worker: v.source_worker || '',
+          time: v.discovered_at || '',
+        },
+      ];
+    },
+
+    vulnStepClass(step) {
+      if (step && step.type === 'intent') return 'bg-brand-50 border-brand-200 text-brand-600';
+      if (step && step.id === 'origin') return 'bg-emerald-50 border-emerald-200 text-emerald-600';
+      if (step && step.id === 'goal') return 'bg-rose-50 border-rose-200 text-rose-600';
+      return 'bg-slate-50 border-slate-200 text-slate-500';
     },
 
     // Username truncated to 20 chars with an ellipsis if longer

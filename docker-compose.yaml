@@ -1,3 +1,5 @@
+name: cairn-021
+
 services:
   cairn-server:
     build:
@@ -9,6 +11,8 @@ services:
       - "8000:8000"
     volumes:
       - ./datas/cairn/:/root/.local/share/cairn/
+    environment:
+      CAIRN_DISPATCHER_INTERNAL_URL: "http://cairn-dispatcher:8989"
     healthcheck:
       test:
         - "CMD"
@@ -30,6 +34,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dispatch.yaml:/cairn/dispatch.yaml
+    environment:
+      CAIRN_DISPATCHER_INTERNAL_API: "1"
+      CAIRN_DISPATCHER_INTERNAL_HOST: "0.0.0.0"
+      CAIRN_DISPATCHER_INTERNAL_PORT: "8989"
     depends_on:
       cairn-server:
         condition: service_healthy

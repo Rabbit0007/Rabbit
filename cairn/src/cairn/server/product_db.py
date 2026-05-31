@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     description TEXT NOT NULL,
     severity TEXT NOT NULL CHECK(severity IN ('critical', 'high', 'medium', 'low')),
     discovered_at TEXT NOT NULL,
+    source_intent_id TEXT,
+    source_intent_description TEXT,
+    source_worker TEXT,
+    source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    process_json TEXT NOT NULL DEFAULT '[]',
     UNIQUE(project_id, fact_id)
 );
 
@@ -79,6 +85,25 @@ CREATE INDEX IF NOT EXISTS idx_templates_user
     ON templates(user_id);
 """
 
+VULNERABILITY_COLUMNS: dict[str, str] = {
+    "source_intent_id": "TEXT",
+    "source_intent_description": "TEXT",
+    "source_worker": "TEXT",
+    "source_fact_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+    "evidence_json": "TEXT NOT NULL DEFAULT '[]'",
+    "process_json": "TEXT NOT NULL DEFAULT '[]'",
+}
+
+
+def _ensure_vulnerability_columns(conn) -> None:
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(vulnerabilities)").fetchall()
+    }
+    for name, ddl in VULNERABILITY_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE vulnerabilities ADD COLUMN {name} {ddl}")
+
 
 def configure_product_db() -> None:
     """Run the product-feature schema DDL on the existing SQLite connection.
@@ -92,3 +117,4 @@ def configure_product_db() -> None:
     """
     with db.get_conn() as conn:
         conn.executescript(PRODUCT_SCHEMA)
+        _ensure_vulnerability_columns(conn)

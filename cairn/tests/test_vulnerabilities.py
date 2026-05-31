@@ -146,7 +146,7 @@ def test_extract_vulnerabilities_returns_single_with_title_and_severity():
     vuln = extracted[0]
     assert vuln.severity == "critical"
     assert vuln.title
-    assert vuln.description == CRITICAL_DESC
+    assert "SQL 注入" in vuln.description
 
 
 def test_extract_vulnerabilities_empty_for_benign_description():

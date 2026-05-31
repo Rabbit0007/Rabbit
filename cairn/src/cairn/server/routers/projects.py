@@ -37,6 +37,7 @@ from cairn.server.services import (
     validate_facts_exist,
     validate_goal_not_in_sources,
 )
+from cairn.server.vulnerability_extraction import scan_project_facts
 
 router = APIRouter(tags=["projects"])
 
@@ -278,6 +279,7 @@ def complete_project(project_id: str, body: CompleteRequest):
             """,
             (project_id,),
         )
+        scan_project_facts(project_id, conn)
 
         return Intent(
             id=iid,
@@ -335,6 +337,7 @@ def reopen_project(project_id: str, body: ReopenRequest):
             "UPDATE projects SET status = 'active' WHERE id = ?",
             (project_id,),
         )
+        scan_project_facts(project_id, conn)
 
         updated_project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         updated_intent = conn.execute(

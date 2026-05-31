@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # The allowed severity levels, matching the ``CHECK`` constraint on the
 # ``vulnerabilities.severity`` column in ``product_db.py``.
@@ -38,6 +38,12 @@ class Vulnerability(BaseModel):
     description: str
     severity: Severity
     discovered_at: str
+    source_intent_id: str | None = None
+    source_intent_description: str | None = None
+    source_worker: str | None = None
+    source_fact_ids: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    process: list[dict[str, str]] = Field(default_factory=list)
 
 
 class VulnerabilitySummary(BaseModel):
