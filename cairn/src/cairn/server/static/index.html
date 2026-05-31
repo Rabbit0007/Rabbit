@@ -1957,7 +1957,7 @@
                           <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.1em] border"
                             :class="vulnSeverityBadgeClass(v.severity)"
                             x-text="vulnSeverityLabel(v.severity)"></span>
-                          <span class="text-[11px] text-slate-400 font-mono" x-text="v.fact_id"></span>
+                          <span class="text-[11px] text-slate-400 font-mono" x-text="vulnFactLabel(v)"></span>
                           <span class="text-[11px] text-slate-400 tabular-nums" x-text="v.discovered_at"></span>
                         </div>
                         <h4 class="text-sm lg:text-base font-semibold text-slate-800 leading-snug break-words [overflow-wrap:anywhere]" x-text="v.title"></h4>
@@ -1980,8 +1980,8 @@
                           <p class="mt-1 text-sm font-medium text-slate-700 break-words [overflow-wrap:anywhere]" x-text="v.source_worker || '未记录'"></p>
                         </div>
                         <div class="border border-slate-200/70 rounded-xl bg-white px-3 py-2">
-                          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">过程步数</p>
-                          <p class="mt-1 text-sm font-medium text-slate-700 tabular-nums" x-text="vulnProcessItems(v).length + ' 步'"></p>
+                          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">关联事实</p>
+                          <p class="mt-1 text-sm font-medium text-slate-700 break-words [overflow-wrap:anywhere]" x-text="vulnRelatedFacts(v)"></p>
                         </div>
                       </div>
 
@@ -1995,6 +1995,31 @@
                         <div class="space-y-2">
                           <template x-for="(e, idx) in vulnEvidence(v)" :key="idx">
                             <div class="rounded-xl border border-slate-200/70 bg-white px-3 py-2 text-sm leading-6 text-slate-600 break-words [overflow-wrap:anywhere]" x-text="e"></div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div class="mb-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">漏洞证明数据包</p>
+                        <div class="space-y-3">
+                          <template x-for="(packet, idx) in vulnProofPackets(v)" :key="idx">
+                            <div class="rounded-xl border border-slate-200/70 bg-white overflow-hidden">
+                              <div class="px-3 py-2 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                <p class="text-sm font-semibold text-slate-700" x-text="packet.title || ('证明数据包 ' + (idx + 1))"></p>
+                                <span class="text-[11px] text-slate-400">报告级重构</span>
+                              </div>
+                              <div class="grid grid-cols-1 xl:grid-cols-2 gap-0 xl:divide-x xl:divide-slate-100">
+                                <div class="p-3">
+                                  <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">请求数据包</p>
+                                  <pre class="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs leading-5 text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-3" x-text="packet.request || '无请求数据'"></pre>
+                                </div>
+                                <div class="p-3">
+                                  <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">响应/回显证明</p>
+                                  <pre class="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs leading-5 text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-3" x-text="packet.response || '无响应数据'"></pre>
+                                </div>
+                              </div>
+                              <p class="px-3 pb-3 text-xs leading-5 text-slate-400" x-text="packet.note || ''"></p>
+                            </div>
                           </template>
                         </div>
                       </div>
@@ -3230,6 +3255,27 @@ function cairnApp() {
     vulnEvidence(v) {
       if (Array.isArray(v.evidence) && v.evidence.length) return v.evidence;
       return v.description ? [v.description] : ['暂无证据摘要'];
+    },
+
+    vulnProofPackets(v) {
+      if (Array.isArray(v.proof_packets) && v.proof_packets.length) return v.proof_packets;
+      return [{
+        title: '证明数据包暂未提取',
+        request: '当前报告没有足够信息重构请求数据包。',
+        response: '可查看关键证据和漏洞浮现过程确认发现依据。',
+        note: '',
+      }];
+    },
+
+    vulnFactLabel(v) {
+      const ids = Array.isArray(v.related_fact_ids) && v.related_fact_ids.length ? v.related_fact_ids : [v.fact_id];
+      if (ids.length <= 1) return ids[0] || v.fact_id || '未记录';
+      return `${ids[0]} 等 ${ids.length} 个事实`;
+    },
+
+    vulnRelatedFacts(v) {
+      const ids = Array.isArray(v.related_fact_ids) && v.related_fact_ids.length ? v.related_fact_ids : [v.fact_id];
+      return ids.filter(Boolean).join(', ') || '未记录';
     },
 
     vulnProcessItems(v) {

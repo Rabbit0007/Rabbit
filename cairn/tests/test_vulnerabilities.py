@@ -372,6 +372,37 @@ def test_list_ordered_most_severe_first(client, populated):
     assert severities == sorted(severities)
 
 
+def test_list_merges_same_cve_and_keeps_final_confirmation(client, temp_db):
+    """Report output merges repeated findings for the same project/CVE."""
+    _insert_project("p1", "JBoss Test")
+    _insert_fact(
+        "f002",
+        "p1",
+        "CVE-2017-12149 JBoss 反序列化/远程命令执行风险；"
+        "相关端点：/invoker/readonly；使用 whoami 作为命令执行证明；"
+        "该阶段尚未拿到最终命令执行结果。",
+    )
+    _insert_fact(
+        "f014",
+        "p1",
+        "CVE-2017-12149 JBoss 远程命令执行已成功验证；"
+        "目标 http://127.0.0.1:60001；相关端点：/invoker/readonly；"
+        "利用链涉及 ysoserial 载荷；CommonsCollections 载荷被用于验证；"
+        "whoami output: root。id output: uid=0(root)。",
+    )
+    scan_project_facts("p1")
+
+    resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["fact_id"] == "f014"
+    assert body[0]["related_fact_ids"] == ["f002", "f014"]
+    assert "最终确认事实为 f014" in body[0]["description"]
+    assert "POST /invoker/readonly HTTP/1.1" in body[0]["proof_packets"][0]["request"]
+    assert "uid=0(root)" in body[0]["proof_packets"][0]["response"]
+
+
 # ---------------------------------------------------------------------------
 # Summary endpoint (requirements 6.3, 6.7)
 # ---------------------------------------------------------------------------
@@ -448,7 +479,17 @@ def test_export_csv_content_and_summary(client, populated):
 
     # The data header appears after the summary; data rows follow.
     header_index = rows.index(
-        ["severity", "title", "description", "project_name", "discovered_at"]
+        [
+            "severity",
+            "title",
+            "description",
+            "project_name",
+            "discovered_at",
+            "fact_id",
+            "related_fact_ids",
+            "evidence",
+            "proof_packets",
+        ]
     )
     data_rows = [r for r in rows[header_index + 1 :] if r]
     assert len(data_rows) == populated["total"]
@@ -463,7 +504,17 @@ def test_export_csv_respects_filters(client, populated):
     assert resp.status_code == 200
     rows = list(csv.reader(io.StringIO(resp.text)))
     header_index = rows.index(
-        ["severity", "title", "description", "project_name", "discovered_at"]
+        [
+            "severity",
+            "title",
+            "description",
+            "project_name",
+            "discovered_at",
+            "fact_id",
+            "related_fact_ids",
+            "evidence",
+            "proof_packets",
+        ]
     )
     data_rows = [r for r in rows[header_index + 1 :] if r]
     assert len(data_rows) == populated["by_severity"]["high"]
@@ -505,7 +556,17 @@ def test_export_csv_zero_results_valid_file(client, temp_db):
     assert summary_counts == {"critical": 0, "high": 0, "medium": 0, "low": 0}
     # Column header is still present; no data rows follow it.
     header_index = rows.index(
-        ["severity", "title", "description", "project_name", "discovered_at"]
+        [
+            "severity",
+            "title",
+            "description",
+            "project_name",
+            "discovered_at",
+            "fact_id",
+            "related_fact_ids",
+            "evidence",
+            "proof_packets",
+        ]
     )
     data_rows = [r for r in rows[header_index + 1 :] if r]
     assert data_rows == []

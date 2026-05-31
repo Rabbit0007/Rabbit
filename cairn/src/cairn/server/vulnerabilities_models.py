@@ -42,8 +42,10 @@ class Vulnerability(BaseModel):
     source_intent_description: str | None = None
     source_worker: str | None = None
     source_fact_ids: list[str] = Field(default_factory=list)
+    related_fact_ids: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     process: list[dict[str, str]] = Field(default_factory=list)
+    proof_packets: list[dict[str, str]] = Field(default_factory=list)
 
 
 class VulnerabilitySummary(BaseModel):

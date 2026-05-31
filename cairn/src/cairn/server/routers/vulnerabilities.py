@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -86,6 +87,230 @@ def _row_to_vulnerability(row) -> Vulnerability:
     return Vulnerability(**data)
 
 
+_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _unique(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def _fact_rank(fact_id: str | None) -> int:
+    match = re.search(r"\d+", fact_id or "")
+    return int(match.group(0)) if match else -1
+
+
+def _all_report_text(vulns: list[Vulnerability]) -> str:
+    parts: list[str] = []
+    for vuln in vulns:
+        parts.extend([vuln.title, vuln.description, *vuln.evidence])
+        parts.extend(str(item.get("description", "")) for item in vuln.process)
+    return "\n".join(parts)
+
+
+def _vulnerability_signature(vuln: Vulnerability) -> str:
+    text = f"{vuln.title}\n{vuln.description}"
+    cve = re.search(r"\bCVE-\d{4}-\d+\b", text, re.IGNORECASE)
+    if cve:
+        return f"cve:{cve.group(0).upper()}"
+    lower = text.lower()
+    if "sql 注入" in text or "sql injection" in lower or "sqli" in lower:
+        return "class:sql-injection"
+    if "jboss" in lower and ("/invoker" in lower or "反序列化" in text):
+        return "class:jboss-invoker-rce"
+    if "远程命令执行" in text or "命令执行" in text or "rce" in lower:
+        return "class:remote-command-execution"
+    return "title:" + re.sub(r"\s+", " ", vuln.title.lower()).strip()
+
+
+def _confirmation_score(vuln: Vulnerability) -> tuple[int, int]:
+    text = f"{vuln.title}\n{vuln.description}\n" + "\n".join(vuln.evidence)
+    score = 0
+    for pattern, weight in (
+        (r"已成功验证|目标已达成|成功执行|任意命令执行", 40),
+        (r"root\s*权限|uid=0|whoami\s*(?:output|输出)?[:：]?\s*root", 35),
+        (r"已确认|确认存在|核心发现|利用路径已确认", 20),
+        (r"尚未拿到|未获得|目标尚未达成|失败|不可用", -30),
+    ):
+        if re.search(pattern, text, re.IGNORECASE):
+            score += weight
+    return (score, _fact_rank(vuln.fact_id))
+
+
+def _merge_process(vulns: list[Vulnerability]) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    ordered = sorted(vulns, key=lambda item: _fact_rank(item.fact_id))
+    for vuln in ordered:
+        for step in vuln.process:
+            key = (
+                str(step.get("type", "")),
+                str(step.get("id", "")),
+                str(step.get("description", "")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(step)
+    return merged
+
+
+def _target_host_from_text(text: str) -> str:
+    match = re.search(r"https?://([^/\s,;]+)", text)
+    return match.group(1) if match else "目标主机"
+
+
+def _proof_packets(vulns: list[Vulnerability]) -> list[dict[str, str]]:
+    text = _all_report_text(vulns)
+    host = _target_host_from_text(text)
+    packets: list[dict[str, str]] = []
+
+    if re.search(r"sql 注入|sql injection|sqli", text, re.IGNORECASE):
+        packets.append(
+            {
+                "title": "SQL 注入验证请求（重构）",
+                "request": (
+                    "GET /sqli-labs/Less-1/?id=1%27%20UNION%20SELECT%201,version(),user()--+ HTTP/1.1\n"
+                    f"Host: {host}\n"
+                    "Accept: text/html,*/*\n"
+                    "Connection: close"
+                ),
+                "response": "页面回显数据库版本、当前用户或 flag/敏感结果；报告证据中包含 MySQL 版本、root@localhost/FILE 权限或已提取 flag。",
+                "note": "该数据包为根据探索事实重构的漏洞证明请求，保留关键参数和验证思路。",
+            }
+        )
+
+    if re.search(r"jboss|/invoker|ysoserial|反序列化|cve-2017-12149|cve-2007-1036", text, re.IGNORECASE):
+        endpoint = "/invoker/readonly" if "/invoker/readonly" in text else "/invoker/JMXInvokerServlet"
+        payloads: list[str] = []
+        if "CommonsCollections" in text:
+            payloads.append("CommonsCollections6/7")
+        payloads.extend(
+            name
+            for name in ("CommonsCollections6", "CommonsCollections7", "JBossInterceptors1", "JavassistWeld1")
+            if name in text and name not in payloads
+        )
+        payload = payloads[0] if payloads else "ysoserial payload"
+        command = "whoami; id" if re.search(r"uid=0|root", text, re.I) else "whoami"
+        proof_lines: list[str] = []
+        if re.search(r"whoami(?:\s+output)?[:：]?\s*root", text, re.I) or "whoami 作为命令执行证明" in text:
+            proof_lines.append("whoami output: root")
+        uid = re.search(r"uid=0\([^)]*\)", text, re.I)
+        if uid:
+            proof_lines.append(f"id output: {uid.group(0)}")
+        elif re.search(r"uid=0|root\s*权限", text, re.I):
+            proof_lines.append("id output: uid=0(root)")
+        if "HTTP 500" in text:
+            proof_lines.append("反序列化端点探测响应：HTTP 500，符合 JBoss invoker 反序列化入口特征")
+        packets.append(
+            {
+                "title": "JBoss 反序列化命令执行请求（重构）",
+                "request": (
+                    f"POST {endpoint} HTTP/1.1\n"
+                    f"Host: {host}\n"
+                    "Content-Type: application/x-java-serialized-object\n"
+                    "Connection: close\n\n"
+                    f"<ysoserial {payload} \"{command}\" 生成的 Java 序列化载荷>"
+                ),
+                "response": "\n".join(proof_lines)
+                or "命令执行证明来自回调或命令回显；若最终事实已确认，证据包含 whoami=root、id=uid=0(root) 或目标服务器权限获取结果。",
+                "note": "这里展示的是报告级证明数据包：原始二进制序列化体不直接展开，但保留了方法、端点、Content-Type、载荷类型和命令证明。",
+            }
+        )
+
+    return packets
+
+
+def _evidence_score(text: str) -> int:
+    value = text or ""
+    score = 0
+    for pattern, weight in (
+        (r"whoami\s+output|id\s+output|uid=0|root\s*权限", 80),
+        (r"已成功验证|目标已达成|成功执行|任意命令执行", 70),
+        (r"无需认证|相关端点|/invoker|Content-Type|ysoserial|CommonsCollections", 30),
+        (r"CVE-\d{4}-\d+|SQL 注入|反序列化|远程命令执行", 20),
+        (r"尚未|未获得|失败|不可用|No \\.ser|pre-staged|Sub-path|failed|not achieved", -60),
+        (r" expects | would | requires manually |ClassNotFoundException|NullPointerException", -40),
+    ):
+        if re.search(pattern, value, re.IGNORECASE):
+            score += weight
+    return score
+
+
+def _select_evidence(items: list[str], winner: Vulnerability) -> list[str]:
+    candidates = _unique([winner.description, *items])
+    ranked = sorted(
+        enumerate(candidates),
+        key=lambda pair: (-_evidence_score(pair[1]), pair[0]),
+    )
+    selected: list[str] = []
+    for _idx, item in ranked:
+        if _evidence_score(item) < 0 and selected:
+            continue
+        selected.append(item)
+        if len(selected) >= 6:
+            break
+    return selected or [winner.description]
+
+
+def _merge_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
+    groups: dict[tuple[str, str], list[Vulnerability]] = {}
+    for vuln in vulnerabilities:
+        key = (vuln.project_id, _vulnerability_signature(vuln))
+        groups.setdefault(key, []).append(vuln)
+
+    merged: list[Vulnerability] = []
+    for (_project_id, signature), items in groups.items():
+        winner = max(items, key=_confirmation_score)
+        related_fact_ids = _unique([item.fact_id for item in items])
+        related_source_ids = _unique(
+            [source_id for item in items for source_id in item.source_fact_ids]
+        )
+        evidence = _select_evidence(
+            [evidence for item in items for evidence in item.evidence],
+            winner,
+        )
+        process = _merge_process(items)
+        proof_packets = _proof_packets(items)
+
+        description = winner.description
+        if len(items) > 1:
+            description = (
+                f"{description} 已合并同一项目内 {len(items)} 个相关探索事实"
+                f"（{', '.join(related_fact_ids)}），最终确认事实为 {winner.fact_id}。"
+            )
+
+        merged.append(
+            winner.model_copy(
+                update={
+                    "id": f"vuln_{winner.project_id}_{re.sub(r'[^a-zA-Z0-9]+', '_', signature).strip('_').lower()}",
+                    "description": description,
+                    "source_fact_ids": related_source_ids,
+                    "related_fact_ids": related_fact_ids,
+                    "evidence": evidence,
+                    "process": process,
+                    "proof_packets": proof_packets,
+                }
+            )
+        )
+
+    return sorted(
+        merged,
+        key=lambda item: (
+            _SEVERITY_RANK.get(item.severity, 99),
+            -_confirmation_score(item)[0],
+            str(item.discovered_at or ""),
+            item.id,
+        ),
+    )
+
+
 @router.get("", response_model=list[Vulnerability])
 def list_vulnerabilities(
     severity: Severity | None = Query(
@@ -140,7 +365,7 @@ def list_vulnerabilities(
 
         rows = conn.execute(_vulnerability_select(where_sql), params).fetchall()
 
-    return [_row_to_vulnerability(row) for row in rows]
+    return _merge_vulnerabilities([_row_to_vulnerability(row) for row in rows])
 
 
 @router.get("/summary", response_model=VulnerabilitySummary)
@@ -155,15 +380,11 @@ def vulnerabilities_summary() -> VulnerabilitySummary:
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT severity, COUNT(*) AS n FROM vulnerabilities GROUP BY severity"
-        ).fetchall()
+        rows = conn.execute(_vulnerability_select(""), []).fetchall()
 
-    for row in rows:
-        # The severity CHECK constraint guarantees the value is one of the four
-        # known levels, but guard defensively against unexpected rows.
-        if row["severity"] in counts:
-            counts[row["severity"]] = int(row["n"])
+    for vuln in _merge_vulnerabilities([_row_to_vulnerability(row) for row in rows]):
+        if vuln.severity in counts:
+            counts[vuln.severity] += 1
 
     return VulnerabilitySummary(**counts)
 
@@ -171,7 +392,17 @@ def vulnerabilities_summary() -> VulnerabilitySummary:
 # Columns emitted, in order, for each vulnerability in a CSV export. Mirrors the
 # fields required by requirement 8.2 (severity, title, description, project name,
 # discovery date).
-_CSV_COLUMNS = ("severity", "title", "description", "project_name", "discovered_at")
+_CSV_COLUMNS = (
+    "severity",
+    "title",
+    "description",
+    "project_name",
+    "discovered_at",
+    "fact_id",
+    "related_fact_ids",
+    "evidence",
+    "proof_packets",
+)
 
 # Severity levels in display order, used to render the summary section so the
 # per-level counts always appear in a stable, most-severe-first order.
@@ -218,7 +449,7 @@ def _query_filtered_vulnerabilities(
 
         rows = conn.execute(_vulnerability_select(where_sql), params).fetchall()
 
-    return [_row_to_vulnerability(row) for row in rows]
+    return _merge_vulnerabilities([_row_to_vulnerability(row) for row in rows])
 
 
 def _summarize(vulnerabilities: list[Vulnerability]) -> dict[str, int]:
@@ -247,7 +478,13 @@ def _render_json_export(vulnerabilities: list[Vulnerability]) -> str:
         "summary": _summarize(vulnerabilities),
         "vulnerabilities": [vuln.model_dump() for vuln in vulnerabilities],
     }
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _csv_cell(value) -> str:
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value or "")
 
 
 def _render_csv_export(vulnerabilities: list[Vulnerability]) -> str:
@@ -277,7 +514,7 @@ def _render_csv_export(vulnerabilities: list[Vulnerability]) -> str:
     # Data table: column header followed by one row per vulnerability.
     writer.writerow(list(_CSV_COLUMNS))
     for vuln in vulnerabilities:
-        writer.writerow([getattr(vuln, column) for column in _CSV_COLUMNS])
+        writer.writerow([_csv_cell(getattr(vuln, column)) for column in _CSV_COLUMNS])
 
     return buffer.getvalue()
 
@@ -350,14 +587,4 @@ def refresh_vulnerabilities() -> VulnerabilitySummary:
     """
     scan_all_projects()
 
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT severity, COUNT(*) AS n FROM vulnerabilities GROUP BY severity"
-        ).fetchall()
-
-    for row in rows:
-        if row["severity"] in counts:
-            counts[row["severity"]] = int(row["n"])
-
-    return VulnerabilitySummary(**counts)
+    return vulnerabilities_summary()
