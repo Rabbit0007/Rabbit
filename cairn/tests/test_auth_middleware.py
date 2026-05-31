@@ -23,6 +23,7 @@ database.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -64,10 +65,23 @@ def _register(client):
     """Register a user and return the resulting (authenticated) client."""
     resp = client.post(
         "/api/auth/register",
-        json={"username": VALID_USERNAME, "password": VALID_PASSWORD},
+        json={
+            "username": VALID_USERNAME,
+            "password": VALID_PASSWORD,
+            **_captcha_payload(client),
+        },
     )
     assert resp.status_code == 201
     return resp
+
+
+def _captcha_payload(client):
+    resp = client.get("/api/auth/captcha")
+    assert resp.status_code == 200
+    body = resp.json()
+    nums = [int(value) for value in re.findall(r"\d+", body["question"])]
+    assert len(nums) == 2
+    return {"captcha_id": body["captcha_id"], "captcha_answer": str(sum(nums))}
 
 
 # ---------------------------------------------------------------------------
@@ -144,13 +158,21 @@ def test_exempt_paths_bypass_auth(app_client, monkeypatch):
     # router's own generic credential error, not the middleware's gate).
     login_resp = fresh.post(
         "/api/auth/login",
-        json={"username": "nobody", "password": "whatever12"},
+        json={
+            "username": "nobody",
+            "password": "whatever12",
+            **_captcha_payload(fresh),
+        },
     )
     assert login_resp.status_code != 302  # not redirected by the middleware
     # Register endpoint -> exempt and fully usable without auth.
     reg_resp = fresh.post(
         "/api/auth/register",
-        json={"username": "exempt_user", "password": "password123"},
+        json={
+            "username": "exempt_user",
+            "password": "password123",
+            **_captcha_payload(fresh),
+        },
     )
     assert reg_resp.status_code == 201
 

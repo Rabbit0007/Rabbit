@@ -11,6 +11,7 @@ the Secure session cookie round-trips.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,17 +30,29 @@ VALID_USERNAME = "alice"
 VALID_PASSWORD = "password123"
 
 
+def captcha_payload(client):
+    response = client.get("/api/auth/captcha")
+    assert response.status_code == 200
+    body = response.json()
+    nums = [int(value) for value in re.findall(r"\d+", body["question"])]
+    assert len(nums) == 2
+    return {
+        "captcha_id": body["captcha_id"],
+        "captcha_answer": str(sum(nums)),
+    }
+
+
 def register(client, username=VALID_USERNAME, password=VALID_PASSWORD):
     return client.post(
         "/api/auth/register",
-        json={"username": username, "password": password},
+        json={"username": username, "password": password, **captcha_payload(client)},
     )
 
 
 def login(client, username=VALID_USERNAME, password=VALID_PASSWORD):
     return client.post(
         "/api/auth/login",
-        json={"username": username, "password": password},
+        json={"username": username, "password": password, **captcha_payload(client)},
     )
 
 
@@ -161,6 +174,15 @@ def test_register_missing_fields_returns_422(client):
 def test_register_empty_username_or_password_returns_422(client):
     assert register(client, username="", password=VALID_PASSWORD).status_code == 422
     assert register(client, username=VALID_USERNAME, password="").status_code == 422
+
+
+def test_register_requires_valid_captcha(client):
+    response = client.post(
+        "/api/auth/register",
+        json={"username": "bob", "password": VALID_PASSWORD},
+    )
+    assert response.status_code == 400
+    assert "验证码" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

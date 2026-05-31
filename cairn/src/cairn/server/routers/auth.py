@@ -36,6 +36,7 @@ SESSION_DURATION = timedelta(hours=24)
 # locked.
 MAX_FAILED_LOGIN_ATTEMPTS = 5
 RATE_LIMIT_WINDOW = timedelta(minutes=15)
+CAPTCHA_DURATION = timedelta(minutes=5)
 
 # Cookie name carrying the server-side session token. The auth middleware
 # (task 2.1) reads the token from this cookie.
@@ -48,6 +49,8 @@ LOCAL_HTTP_COOKIE_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # Timestamp format used throughout the codebase (see services.utcnow).
 _TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+_CAPTCHA_CHALLENGES: dict[str, tuple[str, datetime]] = {}
 
 
 def _format_timestamp(value: datetime) -> str:
@@ -118,6 +121,46 @@ def _set_session_cookie(response: Response, token: str, request: Request) -> Non
     )
 
 
+def _cleanup_captchas(now: datetime) -> None:
+    expired = [
+        captcha_id
+        for captcha_id, (_answer, expires_at) in _CAPTCHA_CHALLENGES.items()
+        if expires_at <= now
+    ]
+    for captcha_id in expired:
+        _CAPTCHA_CHALLENGES.pop(captcha_id, None)
+
+
+def _verify_captcha(captcha_id: str | None, captcha_answer: str | None) -> None:
+    now = datetime.now(timezone.utc)
+    _cleanup_captchas(now)
+    if not captcha_id or captcha_answer is None:
+        raise HTTPException(status_code=400, detail="验证码为必填项")
+    expected = _CAPTCHA_CHALLENGES.pop(captcha_id, None)
+    if expected is None:
+        raise HTTPException(status_code=400, detail="验证码已过期，请刷新后重试")
+    answer, expires_at = expected
+    if expires_at <= now or captcha_answer.strip() != answer:
+        raise HTTPException(status_code=400, detail="验证码错误，请重试")
+
+
+@router.get("/captcha")
+def captcha() -> dict[str, str | int]:
+    """Return a short arithmetic captcha challenge for login/register forms."""
+    now = datetime.now(timezone.utc)
+    _cleanup_captchas(now)
+    left = secrets.randbelow(8) + 2
+    right = secrets.randbelow(8) + 2
+    captcha_id = secrets.token_urlsafe(16)
+    answer = str(left + right)
+    _CAPTCHA_CHALLENGES[captcha_id] = (answer, now + CAPTCHA_DURATION)
+    return {
+        "captcha_id": captcha_id,
+        "question": f"{left} + {right} = ?",
+        "expires_in": int(CAPTCHA_DURATION.total_seconds()),
+    }
+
+
 @router.post("/register", response_model=UserResponse, status_code=201)
 def register(body: RegisterRequest, response: Response, request: Request) -> UserResponse:
     """Register a new user.
@@ -129,6 +172,7 @@ def register(body: RegisterRequest, response: Response, request: Request) -> Use
     password as a bcrypt hash with cost 12 (requirement 1.3), creates a session
     with a 24-hour expiry, and sets an HTTP-only session cookie (requirement 1.1).
     """
+    _verify_captcha(body.captcha_id, body.captcha_answer)
     username_lower = body.username.lower()
     now = datetime.now(timezone.utc)
     created_at = _format_timestamp(now)
@@ -220,6 +264,7 @@ def login(body: LoginRequest, response: Response, request: Request) -> UserRespo
     - On success, creates a session with a 24-hour expiry and sets an HTTP-only,
       Secure, SameSite=Strict cookie (requirement 2.1).
     """
+    _verify_captcha(body.captcha_id, body.captcha_answer)
     username_lower = body.username.lower()
     now = datetime.now(timezone.utc)
     window_start = now - RATE_LIMIT_WINDOW

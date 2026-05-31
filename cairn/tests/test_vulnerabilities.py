@@ -457,6 +457,29 @@ def test_export_json_respects_filters(client, populated):
     )
 
 
+def test_export_json_supports_single_vulnerability_scope(client, populated):
+    """A vulnerability_id export contains only that merged finding."""
+    target = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()[0]
+    resp = client.get(
+        "/api/vulnerabilities/export",
+        params={"format": "json", "vulnerability_id": target["id"]},
+    )
+    assert resp.status_code == 200
+    payload = json.loads(resp.content)
+    assert len(payload["vulnerabilities"]) == 1
+    assert payload["vulnerabilities"][0]["id"] == target["id"]
+    assert sum(payload["summary"].values()) == 1
+
+
+def test_export_unknown_vulnerability_returns_404(client, populated):
+    """An unknown vulnerability_id is rejected instead of exporting everything."""
+    resp = client.get(
+        "/api/vulnerabilities/export",
+        params={"format": "json", "vulnerability_id": "missing"},
+    )
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Export endpoint: CSV (requirements 8.2, 8.3)
 # ---------------------------------------------------------------------------
@@ -521,6 +544,46 @@ def test_export_csv_respects_filters(client, populated):
     assert all(r[0] == "high" for r in data_rows)
 
 
+def test_export_markdown_content_and_scope(client, populated):
+    """Markdown export is a readable report and honours project scope."""
+    resp = client.get(
+        "/api/vulnerabilities/export",
+        params={"format": "md", "project_id": "p1"},
+    )
+    assert resp.status_code == 200
+    assert "text/markdown" in resp.headers["content-type"]
+    assert "p1.md" in resp.headers["content-disposition"]
+    text = resp.text
+    assert text.startswith("# Alpha - 渗透测试漏洞报告")
+    assert "## 报告概览" in text
+    assert "## 漏洞清单" in text
+    assert "## 项目：Alpha（`p1`）" in text
+    assert "```http" in text
+    assert "```text" in text
+    assert "Beta" not in text
+
+
+def test_export_pdf_content(client, populated):
+    """PDF export returns a downloadable PDF report."""
+    resp = client.get("/api/vulnerabilities/export", params={"format": "pdf"})
+    assert resp.status_code == 200
+    assert "application/pdf" in resp.headers["content-type"]
+    assert "vulnerabilities.pdf" in resp.headers["content-disposition"]
+    assert resp.content.startswith(b"%PDF-")
+
+
+def test_export_docx_content(client, populated):
+    """Word export returns a downloadable docx report."""
+    resp = client.get("/api/vulnerabilities/export", params={"format": "docx"})
+    assert resp.status_code == 200
+    assert (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        in resp.headers["content-type"]
+    )
+    assert "vulnerabilities.docx" in resp.headers["content-disposition"]
+    assert resp.content.startswith(b"PK")
+
+
 # ---------------------------------------------------------------------------
 # Export endpoint: edge cases (requirements 8.4, 8.5)
 # ---------------------------------------------------------------------------
@@ -528,7 +591,7 @@ def test_export_csv_respects_filters(client, populated):
 
 def test_export_unsupported_format_returns_422(client, populated):
     """An unsupported export format is rejected with 422 (req 8.4)."""
-    resp = client.get("/api/vulnerabilities/export", params={"format": "pdf"})
+    resp = client.get("/api/vulnerabilities/export", params={"format": "xlsx"})
     assert resp.status_code == 422
 
 

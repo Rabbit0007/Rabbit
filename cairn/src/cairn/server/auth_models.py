@@ -96,6 +96,8 @@ class RegisterRequest(BaseModel):
 
     username: str
     password: str
+    captcha_id: str | None = None
+    captcha_answer: str | None = None
 
     @field_validator("username")
     @classmethod
@@ -114,6 +116,8 @@ class LoginRequest(BaseModel):
 
     username: str
     password: str
+    captcha_id: str | None = None
+    captcha_answer: str | None = None
 
     @field_validator("username", "password")
     @classmethod

@@ -27,6 +27,7 @@ Environment notes (consistent with the existing auth/vulnerability tests):
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -39,13 +40,8 @@ from cairn.server.templates_service import BUILTIN_TEMPLATES
 
 from .conftest import BASE_URL
 
-# The four built-in templates that must always be present (requirement 12.1).
-EXPECTED_BUILTIN_TITLES = {
-    "Web Application Assessment",
-    "Internal Network Pentest",
-    "External Network Pentest",
-    "CTF Challenge",
-}
+# The built-in templates that must always be present (requirement 12.1).
+EXPECTED_BUILTIN_TITLES = {template["title"] for template in BUILTIN_TEMPLATES}
 
 # A long-but-valid 200-char string and an over-the-limit 201-char string used to
 # probe the 1-200 character field bounds (requirement 13.1).
@@ -101,6 +97,15 @@ def client(make_client) -> TestClient:
 _user_counter = 0
 
 
+def captcha_payload(client):
+    response = client.get("/api/auth/captcha")
+    assert response.status_code == 200
+    body = response.json()
+    nums = [int(value) for value in re.findall(r"\d+", body["question"])]
+    assert len(nums) == 2
+    return {"captcha_id": body["captcha_id"], "captcha_answer": str(sum(nums))}
+
+
 def register_user(client, username=None, password="password123"):
     """Register a unique user and return the created user's id.
 
@@ -113,7 +118,7 @@ def register_user(client, username=None, password="password123"):
         username = f"user_{_user_counter}"
     response = client.post(
         "/api/auth/register",
-        json={"username": username, "password": password},
+        json={"username": username, "password": password, **captcha_payload(client)},
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]

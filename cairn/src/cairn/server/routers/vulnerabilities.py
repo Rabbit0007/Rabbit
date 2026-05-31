@@ -18,6 +18,8 @@ import csv
 import io
 import json
 import re
+import zipfile
+from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -410,7 +412,7 @@ _SUMMARY_ORDER = ("critical", "high", "medium", "low")
 
 
 def _query_filtered_vulnerabilities(
-    severity: str | None, project_id: str | None
+    severity: str | None, project_id: str | None, vulnerability_id: str | None = None
 ) -> list[Vulnerability]:
     """Load vulnerabilities matching the active filters for export.
 
@@ -449,7 +451,12 @@ def _query_filtered_vulnerabilities(
 
         rows = conn.execute(_vulnerability_select(where_sql), params).fetchall()
 
-    return _merge_vulnerabilities([_row_to_vulnerability(row) for row in rows])
+    vulnerabilities = _merge_vulnerabilities([_row_to_vulnerability(row) for row in rows])
+    if vulnerability_id is not None:
+        vulnerabilities = [v for v in vulnerabilities if v.id == vulnerability_id]
+        if not vulnerabilities:
+            raise HTTPException(status_code=404, detail="Vulnerability not found")
+    return vulnerabilities
 
 
 def _summarize(vulnerabilities: list[Vulnerability]) -> dict[str, int]:
@@ -519,11 +526,550 @@ def _render_csv_export(vulnerabilities: list[Vulnerability]) -> str:
     return buffer.getvalue()
 
 
+def _md_escape(text: str) -> str:
+    return str(text or "").replace("|", "\\|")
+
+
+def _render_markdown_export(vulnerabilities: list[Vulnerability]) -> str:
+    """Render a penetration-test style Markdown report.
+
+    Markdown is the most faithful lightweight format for this product report:
+    tables stay readable, request/response proof packets fit naturally in
+    fenced code blocks, and users can convert the file to PDF/Word later with a
+    dedicated renderer.
+    """
+    counts = _summarize(vulnerabilities)
+    lines: list[str] = [
+        f"# {_report_title(vulnerabilities)}",
+        "",
+        "> Rabbit 自动化安全探索生成的漏洞报告。报告按项目和漏洞组织，包含确认事实、关键证据、证明数据包与漏洞浮现过程。",
+        "",
+        "## 目录",
+        "",
+        "- [报告概览](#报告概览)",
+        "- [漏洞清单](#漏洞清单)",
+    ]
+    for project_id, project_name, _items in _project_groups(vulnerabilities):
+        anchor = f"项目{project_name}{project_id}".lower()
+        lines.append(f"- [项目：{project_name}（{project_id}）](#{anchor})")
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+        "## 报告概览",
+        "",
+        "| 指标 | 数量 |",
+        "| --- | ---: |",
+        f"| 漏洞总数 | {len(vulnerabilities)} |",
+        f"| 严重 | {counts['critical']} |",
+        f"| 高危 | {counts['high']} |",
+        f"| 中危 | {counts['medium']} |",
+        f"| 低危 | {counts['low']} |",
+        "",
+        ]
+    )
+    if not vulnerabilities:
+        lines.extend(["当前范围内没有漏洞。", ""])
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "---",
+            "",
+            "## 漏洞清单",
+            "",
+            "| ID | 漏洞名称 | 项目 | 严重程度 | 确认事实 | 发现时间 |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for index, vuln in enumerate(vulnerabilities, start=1):
+        lines.append(
+            f"| H-{index:02d} | {_md_escape(vuln.title)} | "
+            f"{_md_escape(vuln.project_name)} (`{_md_escape(vuln.project_id)}`) | "
+            f"{_SEVERITY_LABELS.get(vuln.severity, vuln.severity)} | "
+            f"`{_md_escape(vuln.fact_id)}` | {_md_escape(vuln.discovered_at)} |"
+        )
+    lines.append("")
+
+    for project_id, project_name, items in _project_groups(vulnerabilities):
+        lines.extend(["---", "", f"## 项目：{project_name}（`{project_id}`）", ""])
+        for index, vuln in enumerate(items, start=1):
+            lines.extend(
+                [
+                    f"### {index}. {vuln.title}",
+                    "",
+                    f"> 风险级别：**{_SEVERITY_LABELS.get(vuln.severity, vuln.severity)}**；确认事实：`{_md_escape(vuln.fact_id)}`。",
+                    "",
+                    "| 字段 | 内容 |",
+                    "| --- | --- |",
+                    f"| 严重程度 | {_SEVERITY_LABELS.get(vuln.severity, vuln.severity)} |",
+                    f"| 确认事实 | `{_md_escape(vuln.fact_id)}` |",
+                    f"| 关联事实 | {_md_escape(', '.join(vuln.related_fact_ids or [vuln.fact_id]))} |",
+                    f"| 来源意图 | {_md_escape(vuln.source_intent_id or '未记录')} |",
+                    f"| 工作节点 | {_md_escape(vuln.source_worker or '未记录')} |",
+                    f"| 发现时间 | {_md_escape(vuln.discovered_at)} |",
+                    "",
+                    "#### 漏洞描述",
+                    "",
+                    vuln.description or "未记录",
+                    "",
+                    "#### 关键证据",
+                    "",
+                ]
+            )
+            for evidence in vuln.evidence or ["未记录"]:
+                lines.append(f"- {evidence}")
+            lines.append("")
+
+            lines.extend(["#### 漏洞证明数据包", ""])
+            for packet_index, packet in enumerate(vuln.proof_packets or [], start=1):
+                lines.extend(
+                    [
+                        f"**证明 {packet_index}：{packet.get('title') or '漏洞证明'}**",
+                        "",
+                        "请求数据包：",
+                        "",
+                        "```http",
+                        str(packet.get("request") or "未记录"),
+                        "```",
+                        "",
+                        "响应/回显：",
+                        "",
+                        "```text",
+                        str(packet.get("response") or "未记录"),
+                        "```",
+                    ]
+                )
+                if packet.get("note"):
+                    lines.extend(["", f"说明：{packet['note']}"])
+                lines.append("")
+
+            lines.extend(["#### 漏洞浮现过程", ""])
+            for step_index, step in enumerate(vuln.process or [], start=1):
+                label = step.get("label") or step.get("type") or "过程"
+                step_id = step.get("id") or ""
+                worker = f"；节点：{step.get('worker')}" if step.get("worker") else ""
+                time = f"；时间：{step.get('time')}" if step.get("time") else ""
+                lines.append(
+                    f"{step_index}. **{label} `{step_id}`**{worker}{time}："
+                    f"{step.get('description') or '无描述'}"
+                )
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+_SEVERITY_LABELS = {
+    "critical": "严重",
+    "high": "高危",
+    "medium": "中危",
+    "low": "低危",
+}
+
+
+def _report_title(vulnerabilities: list[Vulnerability]) -> str:
+    if len(vulnerabilities) == 1:
+        return f"{vulnerabilities[0].project_name} - 单漏洞验证报告"
+    projects = _unique([v.project_name for v in vulnerabilities])
+    if len(projects) == 1:
+        return f"{projects[0]} - 渗透测试漏洞报告"
+    return "Rabbit 渗透测试漏洞报告"
+
+
+def _project_groups(vulnerabilities: list[Vulnerability]) -> list[tuple[str, str, list[Vulnerability]]]:
+    groups: dict[str, tuple[str, list[Vulnerability]]] = {}
+    for vuln in vulnerabilities:
+        title, items = groups.setdefault(vuln.project_id, (vuln.project_name, []))
+        items.append(vuln)
+    return [(project_id, title, items) for project_id, (title, items) in groups.items()]
+
+
+def _export_filename(vulnerabilities: list[Vulnerability], extension: str) -> str:
+    if len(vulnerabilities) == 1:
+        base = f"{vulnerabilities[0].project_id}-{vulnerabilities[0].fact_id}"
+    else:
+        projects = _unique([v.project_id for v in vulnerabilities])
+        base = projects[0] if len(projects) == 1 else "vulnerabilities"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip("-") or "vulnerabilities"
+    return f"{safe}.{extension}"
+
+
+def _report_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
+    counts = _summarize(vulnerabilities)
+    lines = [
+        "Rabbit 漏洞报告",
+        "",
+        "报告概览",
+        f"严重：{counts['critical']}  高危：{counts['high']}  中危：{counts['medium']}  低危：{counts['low']}",
+        f"漏洞总数：{len(vulnerabilities)}",
+        "",
+    ]
+    if not vulnerabilities:
+        lines.append("当前筛选条件下没有漏洞。")
+        return lines
+
+    for index, vuln in enumerate(vulnerabilities, start=1):
+        lines.extend(
+            [
+                f"{index}. {vuln.title}",
+                f"严重程度：{_SEVERITY_LABELS.get(vuln.severity, vuln.severity)}",
+                f"项目：{vuln.project_name}（{vuln.project_id}）",
+                f"确认事实：{vuln.fact_id}",
+                f"关联事实：{', '.join(vuln.related_fact_ids or [vuln.fact_id])}",
+                f"发现时间：{vuln.discovered_at}",
+                "漏洞描述：",
+                vuln.description,
+                "关键证据：",
+            ]
+        )
+        for evidence in vuln.evidence or ["未记录"]:
+            lines.append(f"- {evidence}")
+        if vuln.proof_packets:
+            lines.append("漏洞证明数据包：")
+            for packet_index, packet in enumerate(vuln.proof_packets, start=1):
+                lines.append(f"证明 {packet_index}：{packet.get('title') or '漏洞证明'}")
+                lines.append("请求：")
+                lines.extend(str(packet.get("request") or "未记录").splitlines())
+                lines.append("响应/回显：")
+                lines.extend(str(packet.get("response") or "未记录").splitlines())
+                note = packet.get("note")
+                if note:
+                    lines.append(f"说明：{note}")
+        if vuln.process:
+            lines.append("漏洞浮现过程：")
+            for step_index, step in enumerate(vuln.process, start=1):
+                step_type = step.get("type", "过程")
+                step_id = step.get("id", "")
+                desc = step.get("description", "")
+                lines.append(f"{step_index}. {step_type} {step_id}：{desc}")
+        lines.append("")
+    return lines
+
+
+def _report_plain_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
+    counts = _summarize(vulnerabilities)
+    lines = [
+        _report_title(vulnerabilities),
+        "报告概览",
+        f"漏洞总数：{len(vulnerabilities)}",
+        f"严重：{counts['critical']}    高危：{counts['high']}    中危：{counts['medium']}    低危：{counts['low']}",
+        "",
+    ]
+    if not vulnerabilities:
+        return lines + ["当前范围内没有漏洞。"]
+
+    lines.extend(["漏洞清单", "ID | 漏洞名称 | 项目 | 严重程度 | 确认事实", "-" * 72])
+    for index, vuln in enumerate(vulnerabilities, start=1):
+        lines.append(
+            f"{index:02d} | {vuln.title} | {vuln.project_name}({vuln.project_id}) | "
+            f"{_SEVERITY_LABELS.get(vuln.severity, vuln.severity)} | {vuln.fact_id}"
+        )
+    lines.append("")
+
+    for project_id, project_name, items in _project_groups(vulnerabilities):
+        lines.extend([f"项目：{project_name}（{project_id}）", "-" * 72])
+        for index, vuln in enumerate(items, start=1):
+            lines.extend(
+                [
+                    f"{index}. {vuln.title}",
+                    f"严重程度：{_SEVERITY_LABELS.get(vuln.severity, vuln.severity)}",
+                    f"确认事实：{vuln.fact_id}",
+                    f"关联事实：{', '.join(vuln.related_fact_ids or [vuln.fact_id])}",
+                    f"发现时间：{vuln.discovered_at}",
+                    "漏洞描述：",
+                    vuln.description,
+                    "关键证据：",
+                ]
+            )
+            for evidence in vuln.evidence or ["未记录"]:
+                lines.append(f"- {evidence}")
+            lines.append("漏洞证明数据包：")
+            for packet_index, packet in enumerate(vuln.proof_packets or [], start=1):
+                lines.extend(
+                    [
+                        f"证明 {packet_index}：{packet.get('title') or '漏洞证明'}",
+                        "请求：",
+                        str(packet.get("request") or "未记录"),
+                        "响应/回显：",
+                        str(packet.get("response") or "未记录"),
+                    ]
+                )
+                if packet.get("note"):
+                    lines.append(f"说明：{packet['note']}")
+            lines.append("漏洞浮现过程：")
+            for step_index, step in enumerate(vuln.process or [], start=1):
+                lines.append(
+                    f"{step_index}. {step.get('label') or step.get('type') or '过程'} "
+                    f"{step.get('id') or ''}：{step.get('description') or '无描述'}"
+                )
+            lines.append("")
+    return lines
+
+
+def _wrap_report_line(line: str, width: int = 42) -> list[str]:
+    if not line:
+        return [""]
+    chunks: list[str] = []
+    current = ""
+    units = re.split(r"(\s+)", line)
+    for unit in units:
+        if not unit:
+            continue
+        if unit.isspace():
+            if current and not current.endswith(" "):
+                current += " "
+            continue
+        while len(unit) > width:
+            if current:
+                chunks.append(current.rstrip())
+                current = ""
+            chunks.append(unit[:width])
+            unit = unit[width:]
+        if len(current) + len(unit) > width:
+            if current:
+                chunks.append(current.rstrip())
+            current = unit
+        else:
+            current += unit
+    if current:
+        chunks.append(current.rstrip())
+    return chunks or [""]
+
+
+def _pdf_hex_text(text: str) -> str:
+    return text.encode("utf-16-be", errors="replace").hex().upper()
+
+
+def _render_pdf_export(vulnerabilities: list[Vulnerability]) -> bytes:
+    wrapped: list[str] = []
+    for line in _report_plain_lines(vulnerabilities):
+        wrapped.extend(_wrap_report_line(line, 54))
+
+    lines_per_page = 42
+    pages = [wrapped[i : i + lines_per_page] for i in range(0, len(wrapped), lines_per_page)]
+    pages = pages or [[_report_title(vulnerabilities), "", "当前范围内没有漏洞。"]]
+
+    objects: list[bytes] = [b"" for _ in range(5)]
+    page_object_numbers: list[int] = []
+    for page_lines in pages:
+        stream_lines = [
+            "0.96 0.98 1 rg 0 0 595 842 re f",
+            "0.02 0.32 0.62 rg 0 806 595 36 re f",
+            "0.86 0.92 1 rg 42 705 511 58 re f",
+        ]
+        y = 818
+        for idx, line in enumerate(page_lines):
+            font_size = 16 if idx == 0 else 10
+            if line in ("报告概览", "漏洞清单") or line.startswith("项目："):
+                font_size = 13
+                y -= 6
+            stream_lines.append(f"BT /F1 {font_size} Tf {48} {y} Td <{_pdf_hex_text(line)}> Tj ET")
+            y -= 16 if font_size >= 13 else 13
+        stream = "\n".join(stream_lines).encode("ascii")
+        content_obj = len(objects) + 1
+        objects.append(
+            b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream"
+        )
+        page_obj = len(objects) + 1
+        page_object_numbers.append(page_obj)
+        objects.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_obj} 0 R >>"
+            ).encode("ascii")
+        )
+
+    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    kids = " ".join(f"{num} 0 R" for num in page_object_numbers)
+    objects[1] = f"<< /Type /Pages /Kids [{kids}] /Count {len(page_object_numbers)} >>".encode("ascii")
+    objects[2] = b"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] >>"
+    objects[3] = b"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor 5 0 R >>"
+    objects[4] = b"<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >>"
+
+    buffer = io.BytesIO()
+    buffer.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(buffer.tell())
+        buffer.write(f"{index} 0 obj\n".encode("ascii"))
+        buffer.write(obj)
+        buffer.write(b"\nendobj\n")
+    xref = buffer.tell()
+    buffer.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    buffer.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        buffer.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+    buffer.write(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    return buffer.getvalue()
+
+
+def _docx_paragraph(text: str, style: str | None = None, color: str | None = None) -> str:
+    style_xml = f'<w:pStyle w:val="{style}"/>' if style else ""
+    color_xml = f'<w:color w:val="{color}"/>' if color else ""
+    return (
+        "<w:p>"
+        f"<w:pPr>{style_xml}</w:pPr>"
+        f"<w:r><w:rPr>{color_xml}</w:rPr><w:t xml:space=\"preserve\">{xml_escape(text)}</w:t></w:r>"
+        "</w:p>"
+    )
+
+
+def _docx_table(rows: list[list[str]], header: bool = False) -> str:
+    xml = ['<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>']
+    for row_index, row in enumerate(rows):
+        xml.append("<w:tr>")
+        for cell in row:
+            shade = '<w:shd w:fill="F3F7FB"/>' if header and row_index == 0 else ""
+            xml.append(
+                "<w:tc><w:tcPr>"
+                + shade
+                + "</w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">"
+                + xml_escape(str(cell or ""))
+                + "</w:t></w:r></w:p></w:tc>"
+            )
+        xml.append("</w:tr>")
+    xml.append("</w:tbl>")
+    return "".join(xml)
+
+
+def _docx_pre_block(text: str) -> str:
+    rows = [[line] for line in str(text or "未记录").splitlines() or ["未记录"]]
+    return _docx_table(rows)
+
+
+def _render_docx_export(vulnerabilities: list[Vulnerability]) -> bytes:
+    counts = _summarize(vulnerabilities)
+    body: list[str] = [
+        _docx_paragraph(_report_title(vulnerabilities), style="Title", color="0F172A"),
+        _docx_paragraph("报告概览", style="Heading1"),
+        _docx_table(
+            [
+                ["总漏洞数", "严重", "高危", "中危", "低危"],
+                [str(len(vulnerabilities)), str(counts["critical"]), str(counts["high"]), str(counts["medium"]), str(counts["low"])],
+            ],
+            header=True,
+        ),
+    ]
+    if vulnerabilities:
+        body.extend(
+            [
+                _docx_paragraph("漏洞清单", style="Heading1"),
+                _docx_table(
+                    [["ID", "漏洞名称", "项目", "严重程度", "确认事实"]]
+                    + [
+                        [
+                            f"H-{idx:02d}",
+                            v.title,
+                            f"{v.project_name} ({v.project_id})",
+                            _SEVERITY_LABELS.get(v.severity, v.severity),
+                            v.fact_id,
+                        ]
+                        for idx, v in enumerate(vulnerabilities, start=1)
+                    ],
+                    header=True,
+                ),
+            ]
+        )
+    for project_id, project_name, items in _project_groups(vulnerabilities):
+        body.append(_docx_paragraph(f"项目：{project_name}（{project_id}）", style="Heading1"))
+        for idx, vuln in enumerate(items, start=1):
+            body.extend(
+                [
+                    _docx_paragraph(f"{idx}. {vuln.title}", style="Heading2"),
+                    _docx_table(
+                        [
+                            ["字段", "内容"],
+                            ["严重程度", _SEVERITY_LABELS.get(vuln.severity, vuln.severity)],
+                            ["确认事实", vuln.fact_id],
+                            ["关联事实", ", ".join(vuln.related_fact_ids or [vuln.fact_id])],
+                            ["发现时间", vuln.discovered_at],
+                            ["工作节点", vuln.source_worker or "未记录"],
+                        ],
+                        header=True,
+                    ),
+                    _docx_paragraph("漏洞描述", style="Heading3"),
+                    _docx_paragraph(vuln.description),
+                    _docx_paragraph("关键证据", style="Heading3"),
+                ]
+            )
+            body.append(_docx_table([["证据"]] + [[item] for item in (vuln.evidence or ["未记录"])], header=True))
+            body.append(_docx_paragraph("漏洞证明数据包", style="Heading3"))
+            for packet_index, packet in enumerate(vuln.proof_packets or [], start=1):
+                body.append(_docx_paragraph(f"证明 {packet_index}：{packet.get('title') or '漏洞证明'}", style="Heading4"))
+                body.append(_docx_table([["请求数据包", "响应/回显"], [packet.get("request") or "未记录", packet.get("response") or "未记录"]], header=True))
+                if packet.get("note"):
+                    body.append(_docx_paragraph(f"说明：{packet['note']}"))
+            body.append(_docx_paragraph("漏洞浮现过程", style="Heading3"))
+            body.append(
+                _docx_table(
+                    [["步骤", "类型/ID", "说明"]]
+                    + [
+                        [
+                            str(step_index),
+                            f"{step.get('label') or step.get('type') or '过程'} {step.get('id') or ''}",
+                            step.get("description") or "无描述",
+                        ]
+                        for step_index, step in enumerate(vuln.process or [], start=1)
+                    ],
+                    header=True,
+                )
+            )
+    if not vulnerabilities:
+        body.append(_docx_paragraph("当前范围内没有漏洞。"))
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body>"
+        + "".join(body)
+        + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+        "</w:body></w:document>"
+    )
+    styles_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/>'
+        '<w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="Heading 1"/><w:pPr><w:spacing w:before="360" w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="30"/><w:color w:val="0F4C81"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="Heading 2"/><w:pPr><w:spacing w:before="280" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="Heading 3"/><w:pPr><w:spacing w:before="220" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="21"/><w:color w:val="334155"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="Heading 4"/><w:pPr><w:spacing w:before="160" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="20"/></w:rPr></w:style>'
+        '<w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="D7DEE8"/><w:left w:val="single" w:sz="4" w:color="D7DEE8"/><w:bottom w:val="single" w:sz="4" w:color="D7DEE8"/><w:right w:val="single" w:sz="4" w:color="D7DEE8"/><w:insideH w:val="single" w:sz="4" w:color="D7DEE8"/><w:insideV w:val="single" w:sz="4" w:color="D7DEE8"/></w:tblBorders><w:tblCellMar><w:top w:w="120" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>'
+        "</w:styles>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as docx:
+        docx.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+            "</Types>",
+        )
+        docx.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+            "</Relationships>",
+        )
+        docx.writestr("word/document.xml", document_xml)
+        docx.writestr("word/styles.xml", styles_xml)
+    return buffer.getvalue()
+
+
 @router.get("/export")
 def export_vulnerabilities(
     format: str = Query(
         default="json",
-        description="Export format; one of 'json' or 'csv'.",
+        description="Export format; one of 'json', 'csv', 'md', 'pdf', 'docx', or 'word'.",
     ),
     severity: str | None = Query(
         default=None,
@@ -532,6 +1078,10 @@ def export_vulnerabilities(
     project_id: str | None = Query(
         default=None,
         description="Optional project filter; restricts the export to one project.",
+    ),
+    vulnerability_id: str | None = Query(
+        default=None,
+        description="Optional vulnerability id; restricts the export to one finding.",
     ),
 ) -> Response:
     """Export vulnerabilities as a downloadable JSON or CSV file.
@@ -551,10 +1101,10 @@ def export_vulnerabilities(
     an unknown severity simply matches nothing and produces a summary-only file.
     """
     normalized = format.lower()
-    if normalized not in ("json", "csv"):
-        raise HTTPException(status_code=422, detail="Supported formats: json, csv")
+    if normalized not in ("json", "csv", "md", "markdown", "pdf", "docx", "word"):
+        raise HTTPException(status_code=422, detail="Supported formats: json, csv, md, pdf, docx")
 
-    vulnerabilities = _query_filtered_vulnerabilities(severity, project_id)
+    vulnerabilities = _query_filtered_vulnerabilities(severity, project_id, vulnerability_id)
 
     if normalized == "json":
         body = _render_json_export(vulnerabilities)
@@ -562,15 +1112,39 @@ def export_vulnerabilities(
             content=body,
             media_type="application/json",
             headers={
-                "Content-Disposition": 'attachment; filename="vulnerabilities.json"'
+                "Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "json")}"'
             },
+        )
+
+    if normalized in ("md", "markdown"):
+        body = _render_markdown_export(vulnerabilities)
+        return Response(
+            content=body,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "md")}"'},
+        )
+
+    if normalized == "pdf":
+        body = _render_pdf_export(vulnerabilities)
+        return Response(
+            content=body,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "pdf")}"'},
+        )
+
+    if normalized in ("docx", "word"):
+        body = _render_docx_export(vulnerabilities)
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "docx")}"'},
         )
 
     body = _render_csv_export(vulnerabilities)
     return Response(
         content=body,
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="vulnerabilities.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "csv")}"'},
     )
 
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rabbit</title>
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/rabbit-icon.png" type="image/png">
 <script src="/static/vendor/tailwindcss.js"></script>
 <script src="/static/vendor/dagre.min.js"></script>
 <script src="/static/vendor/cytoscape.min.js"></script>
@@ -74,6 +74,44 @@
   body > * {
     position: relative;
     z-index: 1;
+  }
+
+  .rabbit-logo-tile {
+    position: relative;
+    overflow: hidden;
+    background: #06101f;
+    border-color: rgba(0, 113, 227, 0.18) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 12px 26px rgba(0, 32, 72, 0.14);
+  }
+
+  .rabbit-logo-tile::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  }
+
+  .rabbit-logo {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+
+  .rabbit-logo-empty {
+    display: block;
+    width: 104px !important;
+    height: 104px !important;
+    border-radius: 28px;
+    object-fit: cover;
+    object-position: center;
+    opacity: 0.9 !important;
+    box-shadow: 0 18px 42px rgba(0, 56, 116, 0.16);
   }
 
   .overlay {
@@ -471,7 +509,7 @@
     backdrop-filter: saturate(180%) blur(22px);
   }
 
-  .app-empty-state img,
+  .app-empty-state img:not(.rabbit-logo-empty),
   .app-empty-state svg {
     width: 86px !important;
     height: 86px !important;
@@ -1045,8 +1083,8 @@
 <div x-show="authChecked && !authenticated" x-cloak class="apple-auth flex-1 flex flex-col items-center justify-center overflow-y-auto p-4 bg-gradient-to-b from-slate-50 to-slate-100">
   <div class="w-full max-w-[420px]">
     <div class="flex flex-col items-center mb-7">
-      <div class="h-14 w-14 rounded-2xl border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden mb-4">
-        <img src="/static/favicon.svg" alt="" class="w-7 h-7 block">
+      <div class="rabbit-logo-tile h-20 w-20 rounded-[24px] border bg-white shadow-sm flex items-center justify-center mb-4">
+        <img src="/static/rabbit-icon.png" alt="" class="rabbit-logo">
       </div>
       <h1 class="text-[28px] font-semibold text-slate-700 tracking-tight leading-none">Rabbit</h1>
       <p class="text-sm text-slate-400 mt-1" x-text="authMode === 'register' ? '创建账号' : '登录以继续'"></p>
@@ -1085,6 +1123,24 @@
           <p x-show="authFieldErrors.password" x-cloak class="text-[11px] text-rose-500 mt-1" x-text="authFieldErrors.password"></p>
           <p x-show="authMode === 'register' && !authFieldErrors.password" class="text-[11px] text-slate-400 mt-1">8–72 个字符。</p>
         </div>
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium uppercase tracking-wide">验证码</label>
+          <div class="flex gap-2">
+            <div class="h-10 min-w-[116px] px-3 rounded-xl border border-slate-200 bg-slate-50/80 text-sm font-semibold text-slate-700 inline-flex items-center justify-center tabular-nums"
+              x-text="authCaptcha.loading ? '加载中…' : (authCaptcha.question || '点击刷新')"></div>
+            <input x-model="authForm.captcha_answer" type="text" inputmode="numeric" autocomplete="off"
+              @input="authFieldErrors.captcha = ''"
+              placeholder="答案"
+              class="min-w-0 flex-1 px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 transition placeholder:text-slate-300"
+              :class="authFieldErrors.captcha ? 'border-rose-300 focus:ring-rose-100 focus:border-rose-400' : 'border-slate-200 focus:ring-brand-100 focus:border-brand-400'">
+            <button type="button" @click="loadCaptcha()" :disabled="authCaptcha.loading"
+              class="h-10 w-10 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center justify-center disabled:opacity-50"
+              title="刷新验证码">
+              <svg class="w-4 h-4" :class="authCaptcha.loading ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
+            </button>
+          </div>
+          <p x-show="authFieldErrors.captcha" x-cloak class="text-[11px] text-rose-500 mt-1" x-text="authFieldErrors.captcha"></p>
+        </div>
 
         <div x-show="authError" x-cloak class="px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-[12px] text-rose-600" x-text="authError"></div>
 
@@ -1106,8 +1162,8 @@
 <nav x-show="authChecked && authenticated" x-cloak
   class="shrink-0 bg-white border-b border-slate-200/70 px-4 h-12 flex items-center gap-2">
   <div class="flex items-center gap-2 mr-2 shrink-0">
-    <div class="h-7 w-7 rounded-lg border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden">
-      <img src="/static/favicon.svg" alt="" class="w-4 h-4 block">
+    <div class="rabbit-logo-tile h-8 w-8 rounded-xl border bg-white shadow-sm flex items-center justify-center">
+      <img src="/static/rabbit-icon.png" alt="" class="rabbit-logo">
     </div>
     <span class="font-semibold text-slate-700 tracking-tight text-sm hidden sm:block">Rabbit</span>
   </div>
@@ -1142,8 +1198,8 @@
 <div x-show="authChecked && authenticated && view === 'list' && currentView === 'projects'" x-cloak class="flex-1 flex flex-col overflow-hidden">
   <header class="app-project-header bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
     <div class="app-brand-lockup flex items-center gap-2.5 min-w-0">
-      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
-        <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
+      <div class="rabbit-logo-tile h-10 w-10 rounded-2xl border bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0">
+        <img src="/static/rabbit-icon.png" alt="" class="rabbit-logo">
       </div>
       <div class="app-page-title">
         <span class="font-semibold text-slate-700 tracking-tight">项目</span>
@@ -1196,7 +1252,7 @@
   <div x-ref="projectListScroll" @scroll.passive="rememberProjectListScroll()" class="flex-1 overflow-y-auto p-4">
     <template x-if="projects.length === 0">
       <div class="app-empty-state flex flex-col items-center justify-center text-slate-400">
-        <img src="/static/favicon.svg" alt="" class="w-20 h-20 mb-5 opacity-30">
+        <img src="/static/rabbit-icon.png" alt="" class="rabbit-logo-empty mb-5">
         <p class="text-lg font-medium text-slate-500">还没有项目</p>
         <p class="text-sm mt-1">创建一个项目开始探索</p>
       </div>
@@ -1779,24 +1835,15 @@
       </div>
     </div>
     <div class="flex-1"></div>
-    <div class="app-section-actions flex items-center gap-1.5">
-      <!-- Export controls (task 11.2, requirements 8.1, 8.2, 8.3). Each button
-           downloads the report in its format, honouring the active severity /
-           project filters via exportVulnerabilities(). -->
-      <button type="button" @click="exportVulnerabilities('json')" :disabled="vulnExporting"
-        class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-        <svg x-show="vulnExporting !== 'json'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4.5 17.25v1.5A2.25 2.25 0 0 0 6.75 21h10.5a2.25 2.25 0 0 0 2.25-2.25v-1.5"/></svg>
-        <svg x-show="vulnExporting === 'json'" x-cloak class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
-        <span>导出 JSON</span>
-      </button>
-      <button type="button" @click="exportVulnerabilities('csv')" :disabled="vulnExporting"
-        class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-        <svg x-show="vulnExporting !== 'csv'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4.5 17.25v1.5A2.25 2.25 0 0 0 6.75 21h10.5a2.25 2.25 0 0 0 2.25-2.25v-1.5"/></svg>
-        <svg x-show="vulnExporting === 'csv'" x-cloak class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
-        <span>导出 CSV</span>
+    <div class="app-section-actions flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200/70 bg-white/70 px-2 py-2 shadow-sm shadow-slate-200/30">
+      <button type="button" @click="exportVulnerabilities('md')" :disabled="vulnExporting"
+        class="h-9 px-4 rounded-xl border border-slate-800/10 bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shadow-slate-300/40">
+        <svg x-show="vulnExporting !== 'md'" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14.25 3H7.5A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h9a2.25 2.25 0 0 0 2.25-2.25V8.25L14.25 3Z"/><path d="M14.25 3v5.25h4.5"/><path d="M8.5 12h7M8.5 15h5M8.5 18h6"/></svg>
+        <svg x-show="vulnExporting === 'md'" x-cloak class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
+        <span>导出 MD</span>
       </button>
       <button type="button" @click="refreshVulnerabilities()" :disabled="vulnLoading"
-        class="h-7 px-2.5 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+        class="h-9 px-3 rounded-xl border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
         <svg class="w-3.5 h-3.5" :class="vulnLoading ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.708"/><path d="M3 3v6h6"/></svg>
         <span x-text="vulnLoading ? '正在刷新…' : '刷新'"></span>
       </button>
@@ -1846,8 +1893,8 @@
     </div>
 
     <!-- Filter controls (requirements 7.1, 7.2, 7.3, 7.5) -->
-    <div class="bg-white rounded-2xl border border-slate-200/60 p-3 mb-4 flex flex-wrap items-end gap-3">
-      <div class="min-w-[10rem]">
+    <div class="bg-white/90 rounded-2xl border border-slate-200/70 p-4 mb-4 flex flex-wrap items-end gap-4 shadow-sm shadow-slate-200/30">
+      <div class="min-w-[12rem]">
         <label class="text-[11px] text-slate-400 mb-1 block font-medium uppercase tracking-wide">严重程度</label>
         <select x-model="vulnFilters.severity" @change="applyVulnFilters()"
           class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
@@ -1858,7 +1905,7 @@
           <option value="low">低危</option>
         </select>
       </div>
-      <div class="min-w-[12rem]">
+      <div class="min-w-[14rem]">
         <label class="text-[11px] text-slate-400 mb-1 block font-medium uppercase tracking-wide">项目</label>
         <select x-model="vulnFilters.project_id" @change="applyVulnFilters()"
           class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
@@ -1907,8 +1954,10 @@
       <div x-show="vulnItems.length > 0" class="space-y-3">
         <template x-for="group in vulnProjectGroups()" :key="group.project_id">
           <section class="bg-white rounded-2xl border border-slate-200/70 overflow-hidden shadow-sm shadow-slate-200/30">
-            <button type="button" @click="toggleVulnProject(group.project_id)"
-              class="w-full px-4 py-4 lg:px-5 flex flex-col lg:flex-row lg:items-center gap-3 text-left hover:bg-slate-50/70 transition">
+            <div @click="toggleVulnProject(group.project_id)" role="button" tabindex="0"
+              @keydown.enter.prevent="toggleVulnProject(group.project_id)"
+              @keydown.space.prevent="toggleVulnProject(group.project_id)"
+              class="w-full px-4 py-4 lg:px-5 flex flex-col lg:flex-row lg:items-center gap-3 text-left hover:bg-slate-50/70 transition cursor-pointer">
               <div class="flex items-center gap-3 min-w-0 flex-1">
                 <span class="h-11 w-11 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center shrink-0">
                   <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M3.75 6.75A2.25 2.25 0 0 1 6 4.5h3.3c.63 0 1.23.26 1.65.72l1.05 1.16c.43.47 1.02.74 1.66.74H18a2.25 2.25 0 0 1 2.25 2.25v7.88A2.25 2.25 0 0 1 18 19.5H6a2.25 2.25 0 0 1-2.25-2.25V6.75Z"/></svg>
@@ -1936,11 +1985,16 @@
                     <span class="ml-1 tabular-nums" x-text="group.counts[level]"></span>
                   </span>
                 </template>
+                <button type="button" @click.stop="exportVulnerabilities('md', { projectId: group.project_id })"
+                  :disabled="vulnExporting"
+                  class="h-8 px-3 rounded-xl border border-slate-200 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-900 hover:text-white transition disabled:opacity-50">
+                  导出 MD
+                </button>
                 <span class="h-8 w-8 rounded-full border border-slate-200 bg-white flex items-center justify-center text-slate-500 shrink-0">
                   <svg class="w-4 h-4 transition" :class="vulnProjectExpanded[group.project_id] ? 'rotate-180' : ''" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
                 </span>
               </div>
-            </button>
+            </div>
 
             <div x-show="vulnProjectExpanded[group.project_id]" class="border-t border-slate-100 bg-slate-50/40">
               <div class="px-4 lg:px-5 py-3 flex items-center justify-between gap-3">
@@ -1970,6 +2024,19 @@
                     </button>
 
                     <div x-show="vulnExpanded[v.id]" class="mt-4 rounded-2xl border border-slate-200/70 bg-slate-50/60 p-4">
+                      <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200/70 bg-white px-3 py-2">
+                        <div>
+                          <p class="text-sm font-semibold text-slate-700">单漏洞报告导出</p>
+                          <p class="text-xs text-slate-400">只导出当前漏洞的详情、证据包和浮现过程。</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <button type="button" @click.stop="exportVulnerabilities('md', { vulnerabilityId: v.id })"
+                            :disabled="vulnExporting"
+                            class="h-8 px-3 rounded-xl border border-slate-200 bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 transition disabled:opacity-50">
+                            导出 MD
+                          </button>
+                        </div>
+                      </div>
                       <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                         <div class="border border-slate-200/70 rounded-xl bg-white px-3 py-2">
                           <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">来源意图</p>
@@ -2783,8 +2850,9 @@ function cairnApp() {
 
     // Login / registration view state (task 10.2, requirements 1.1, 2.1, 3.4).
     authMode: 'login',                 // 'login' | 'register'
-    authForm: { username: '', password: '' },
-    authFieldErrors: { username: '', password: '' },
+    authForm: { username: '', password: '', captcha_answer: '' },
+    authCaptcha: { id: '', question: '', loading: false },
+    authFieldErrors: { username: '', password: '', captcha: '' },
     authError: '',
     authSubmitting: false,
     _authStarted: false,               // guards one-time authenticated startup
@@ -2876,10 +2944,11 @@ function cairnApp() {
     vulnLoading: false,
     vulnProjectExpanded: {},
     vulnExpanded: {},
-    // `vulnExporting` holds the format ('json' | 'csv') currently being
-    // exported, or '' when idle, so each export button can show its own
+    // `vulnExporting` holds the format currently being exported, or false when
+    // idle, so Alpine removes the boolean disabled attribute correctly and each
+    // export button can show its own
     // in-progress state (task 11.2, requirements 8.1, 8.2).
-    vulnExporting: '',
+    vulnExporting: false,
     _vulnLoaded: false,
 
     // Worker dashboard state (task 12.1, requirements 9.1–9.5, 10.1–10.6).
@@ -2955,6 +3024,8 @@ function cairnApp() {
       this.authChecked = true;
       if (this.authenticated) {
         await this.startAuthenticatedApp();
+      } else {
+        await this.loadCaptcha();
       }
     },
 
@@ -3114,19 +3185,25 @@ function cairnApp() {
       }
     },
 
-    // Export the vulnerability report as a downloadable JSON or CSV file
-    // (task 11.2, requirements 8.1, 8.2, 8.3). The active severity/project
-    // filters are forwarded as query params so the export contains exactly the
-    // findings the user is currently viewing. Because the API is cookie
-    // authenticated, the file is fetched as a blob (the cookie rides along with
-    // the same-origin request) and a temporary object-URL anchor triggers the
-    // browser download — a plain link/navigation cannot surface auth errors.
-    async exportVulnerabilities(format) {
+    // Export the vulnerability report as a downloadable file. The visible UI
+    // currently uses Markdown only, while the API still accepts legacy formats.
+    // Active filters and optional project/finding scopes are forwarded so the
+    // downloaded report matches the selected range.
+    async exportVulnerabilities(format, scope = {}) {
       if (this.vulnExporting) return;
       const params = new URLSearchParams();
       params.set('format', format);
-      if (this.vulnFilters.severity) params.set('severity', this.vulnFilters.severity);
-      if (this.vulnFilters.project_id) params.set('project_id', this.vulnFilters.project_id);
+      if (scope.projectId) {
+        params.set('project_id', scope.projectId);
+      } else if (this.vulnFilters.project_id) {
+        params.set('project_id', this.vulnFilters.project_id);
+      }
+      if (scope.vulnerabilityId) {
+        params.set('vulnerability_id', scope.vulnerabilityId);
+      }
+      if (this.vulnFilters.severity && !scope.vulnerabilityId) {
+        params.set('severity', this.vulnFilters.severity);
+      }
 
       this.vulnExporting = format;
       try {
@@ -3141,7 +3218,10 @@ function cairnApp() {
           throw new Error(msg);
         }
         const blob = await r.blob();
-        const filename = `vulnerabilities.${format}`;
+        const extension = (format === 'word' || format === 'docx') ? 'docx' : format;
+        const disposition = r.headers.get('content-disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : `vulnerabilities.${extension}`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -3154,7 +3234,7 @@ function cairnApp() {
       } catch (e) {
         this.showToast(e.message, 'error');
       } finally {
-        this.vulnExporting = '';
+        this.vulnExporting = false;
       }
     },
 
@@ -3534,9 +3614,10 @@ function cairnApp() {
       // startPolling).
       this.stopWorkerPolling();
       this.authMode = 'login';
-      this.authForm = { username: '', password: '' };
-      this.authFieldErrors = { username: '', password: '' };
+      this.authForm = { username: '', password: '', captcha_answer: '' };
+      this.authFieldErrors = { username: '', password: '', captcha: '' };
       this.authError = '';
+      await this.loadCaptcha();
     },
 
     // Submit a password change to PUT /api/auth/password (task 1.5 backend).
@@ -3619,16 +3700,39 @@ function cairnApp() {
       if (this.authMode === mode) return;
       this.authMode = mode;
       this.authError = '';
-      this.authFieldErrors = { username: '', password: '' };
+      this.authForm.captcha_answer = '';
+      this.authFieldErrors = { username: '', password: '', captcha: '' };
+      this.loadCaptcha();
+    },
+
+    async loadCaptcha() {
+      if (this.authCaptcha.loading) return;
+      this.authCaptcha.loading = true;
+      try {
+        const r = await fetch('/api/auth/captcha', { headers: { 'Accept': 'application/json' } });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        this.authCaptcha = {
+          id: data.captcha_id || '',
+          question: data.question || '',
+          loading: false,
+        };
+        this.authForm.captcha_answer = '';
+        this.authFieldErrors.captcha = '';
+      } catch (e) {
+        this.authCaptcha = { id: '', question: '刷新失败', loading: false };
+        this.authFieldErrors.captcha = '验证码加载失败，请刷新。';
+      }
     },
 
     // Client-side validation. Returns true when the form is valid; otherwise
     // populates authFieldErrors with inline messages (requirement: show
     // validation errors inline for username format and password length).
     validateAuthForm() {
-      const errors = { username: '', password: '' };
+      const errors = { username: '', password: '', captcha: '' };
       const username = (this.authForm.username || '').trim();
       const password = this.authForm.password || '';
+      const captcha = (this.authForm.captcha_answer || '').trim();
 
       if (!username) {
         errors.username = '用户名为必填项。';
@@ -3644,8 +3748,14 @@ function cairnApp() {
         errors.password = '密码需为 8–72 个字符。';
       }
 
+      if (!this.authCaptcha.id || !this.authCaptcha.question) {
+        errors.captcha = '请刷新验证码。';
+      } else if (!captcha) {
+        errors.captcha = '请输入验证码答案。';
+      }
+
       this.authFieldErrors = errors;
-      return !errors.username && !errors.password;
+      return !errors.username && !errors.password && !errors.captcha;
     },
 
     // Submit the login or registration form. On success, transition into the
@@ -3658,6 +3768,8 @@ function cairnApp() {
       const body = {
         username: this.authForm.username.trim(),
         password: this.authForm.password,
+        captcha_id: this.authCaptcha.id,
+        captcha_answer: this.authForm.captcha_answer.trim(),
       };
       this.authSubmitting = true;
       try {
@@ -3671,6 +3783,7 @@ function cairnApp() {
 
         if (!r.ok) {
           this.authError = this.authErrorMessage(r.status, data);
+          await this.loadCaptcha();
           return;
         }
 
@@ -3678,12 +3791,13 @@ function cairnApp() {
         // and enter the app (requirements 1.1, 2.1, 3.4, 5.3).
         this.currentUser = data;
         this.authenticated = true;
-        this.authForm = { username: '', password: '' };
-        this.authFieldErrors = { username: '', password: '' };
+        this.authForm = { username: '', password: '', captcha_answer: '' };
+        this.authFieldErrors = { username: '', password: '', captcha: '' };
         this.authError = '';
         await this.startAuthenticatedApp();
       } catch (e) {
         this.authError = '网络错误，请重试。';
+        await this.loadCaptcha();
       } finally {
         this.authSubmitting = false;
       }
@@ -3701,8 +3815,13 @@ function cairnApp() {
           const field = Array.isArray(err.loc) ? err.loc[err.loc.length - 1] : null;
           if (field === 'username') this.authFieldErrors.username = err.msg;
           else if (field === 'password') this.authFieldErrors.password = err.msg;
+          else if (field === 'captcha_answer' || field === 'captcha_id') this.authFieldErrors.captcha = err.msg;
         }
         return '请更正高亮显示的字段。';
+      }
+      if (status === 400 && typeof detail === 'string' && detail.includes('验证码')) {
+        this.authFieldErrors.captcha = detail;
+        return detail;
       }
       if (typeof detail === 'string') return detail;
       if (status === 409) return '该用户名已被占用。';
