@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import errno
+from pathlib import Path
 import threading
 
 from fastapi.testclient import TestClient
 
 from cairn.dispatcher.config import DispatchConfig
-from cairn.dispatcher.internal_api import SECRET_MASK, create_internal_app
+from cairn.dispatcher.internal_api import SECRET_MASK, _write_dispatch_config, create_internal_app
 
 
 def _config(workers: list[dict]) -> DispatchConfig:
@@ -71,6 +73,7 @@ def test_internal_worker_config_masks_secret_env_values(tmp_path):
                 {
                     "name": "claude-1",
                     "type": "claudecode",
+                    "enabled": True,
                     "task_types": ["bootstrap", "reason", "explore"],
                     "max_running": 1,
                     "priority": 0,
@@ -99,6 +102,7 @@ def test_internal_worker_config_preserves_masked_secret_on_update(tmp_path):
                 {
                     "name": "claude-1",
                     "type": "claudecode",
+                    "enabled": True,
                     "task_types": ["bootstrap", "reason", "explore"],
                     "max_running": 1,
                     "priority": 0,
@@ -119,6 +123,7 @@ def test_internal_worker_config_preserves_masked_secret_on_update(tmp_path):
                 {
                     "name": "claude-1",
                     "type": "claudecode",
+                    "enabled": True,
                     "task_types": ["bootstrap", "reason"],
                     "max_running": 2,
                     "priority": 1,
@@ -149,6 +154,7 @@ def test_internal_worker_config_validation_failure_does_not_apply(tmp_path):
                 {
                     "name": "mock-1",
                     "type": "mock",
+                    "enabled": True,
                     "task_types": ["bootstrap"],
                     "max_running": 1,
                     "priority": 0,
@@ -165,6 +171,7 @@ def test_internal_worker_config_validation_failure_does_not_apply(tmp_path):
                 {
                     "name": "bad-codex",
                     "type": "codex",
+                    "enabled": True,
                     "task_types": ["explore"],
                     "max_running": 1,
                     "priority": 0,
@@ -179,3 +186,78 @@ def test_internal_worker_config_validation_failure_does_not_apply(tmp_path):
 
     assert response.status_code == 422
     assert [worker.name for worker in loop.config.workers] == ["mock-1"]
+
+
+def test_internal_worker_config_rejects_all_disabled_workers(tmp_path):
+    client, loop = _client(
+        tmp_path,
+        _config(
+            [
+                {
+                    "name": "mock-1",
+                    "type": "mock",
+                    "enabled": True,
+                    "task_types": ["bootstrap"],
+                    "max_running": 1,
+                    "priority": 0,
+                    "env": {},
+                }
+            ]
+        ),
+    )
+
+    response = client.put(
+        "/internal/workers/config",
+        json={
+            "workers": [
+                {
+                    "name": "mock-1",
+                    "type": "mock",
+                    "enabled": False,
+                    "task_types": ["bootstrap"],
+                    "max_running": 1,
+                    "priority": 0,
+                    "env": {},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert loop.config.workers[0].enabled is True
+
+
+def test_write_dispatch_config_falls_back_when_bind_mount_replace_is_busy(
+    tmp_path, monkeypatch
+):
+    config = _config(
+        [
+            {
+                "name": "mock-1",
+                "type": "mock",
+                "enabled": True,
+                "task_types": ["bootstrap"],
+                "max_running": 1,
+                "priority": 0,
+                "env": {},
+            }
+        ]
+    )
+    path = tmp_path / "dispatch.yaml"
+    path.write_text("workers: []\n", encoding="utf-8")
+    loop = _Loop(path, config)
+
+    original_replace = Path.replace
+
+    def busy_replace(self, target):
+        if self.name == ".dispatch.yaml.tmp":
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", busy_replace)
+
+    _write_dispatch_config(loop, config)
+
+    text = path.read_text(encoding="utf-8")
+    assert "mock-1" in text
+    assert not (tmp_path / ".dispatch.yaml.tmp").exists()

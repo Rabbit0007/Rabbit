@@ -113,6 +113,8 @@ def _snapshot() -> dict:
             {"name": "beta", "type": "gpt", "status": "idle", "running": 0, "unhealthy": False},
             # offline: heartbeat health window lapsed (req 10.5)
             {"name": "gamma", "type": "mock", "status": "idle", "running": 0, "unhealthy": True},
+            # disabled: configured but not participating in scheduling
+            {"name": "delta", "type": "pi", "enabled": False, "status": "disabled", "running": 0, "unhealthy": False},
         ],
         "running_tasks": [
             {"worker_name": "alpha", "current_task": LONG_TASK},
@@ -144,7 +146,7 @@ def test_list_workers_returns_one_card_per_worker(client, monkeypatch):
     resp = client.get("/api/workers")
     assert resp.status_code == 200
     body = resp.json()
-    assert {w["name"] for w in body} == {"alpha", "beta", "gamma"}
+    assert {w["name"] for w in body} == {"alpha", "beta", "gamma", "delta"}
 
 
 def test_list_workers_maps_status_idle_busy_offline(client, monkeypatch):
@@ -157,6 +159,7 @@ def test_list_workers_maps_status_idle_busy_offline(client, monkeypatch):
     assert workers_by_name["beta"]["status"] == "idle"
     # unhealthy heartbeat window -> offline (req 10.5)
     assert workers_by_name["gamma"]["status"] == "offline"
+    assert workers_by_name["delta"]["status"] == "disabled"
 
 
 def test_list_workers_reports_name_and_type(client, monkeypatch):
@@ -166,6 +169,7 @@ def test_list_workers_reports_name_and_type(client, monkeypatch):
     assert workers_by_name["alpha"]["type"] == "claude"
     assert workers_by_name["beta"]["type"] == "gpt"
     assert workers_by_name["gamma"]["type"] == "mock"
+    assert workers_by_name["delta"]["enabled"] is False
 
 
 def test_busy_worker_current_task_truncated_to_120_chars(client, monkeypatch):
@@ -194,6 +198,7 @@ def test_non_busy_workers_have_no_current_task(client, monkeypatch):
     workers_by_name = _by_name(client.get("/api/workers").json())
     assert workers_by_name["beta"]["current_task"] is None
     assert workers_by_name["gamma"]["current_task"] is None
+    assert workers_by_name["delta"]["current_task"] is None
 
 
 def test_tasks_completed_counts_and_avg_duration(client, monkeypatch):
@@ -291,6 +296,7 @@ def test_worker_config_proxy_returns_masked_config(client, monkeypatch):
                     {
                         "name": "mock-1",
                         "type": "mock",
+                        "enabled": True,
                         "task_types": ["bootstrap"],
                         "max_running": 1,
                         "priority": 0,
@@ -322,6 +328,7 @@ def test_worker_config_update_proxies_payload(client, monkeypatch):
             {
                 "name": "mock-1",
                 "type": "mock",
+                "enabled": True,
                 "task_types": ["bootstrap"],
                 "max_running": 1,
                 "priority": 0,
@@ -361,6 +368,7 @@ def test_worker_config_test_proxy_returns_result(client, monkeypatch):
             "worker": {
                 "name": "mock-1",
                 "type": "mock",
+                "enabled": True,
                 "task_types": ["bootstrap"],
                 "max_running": 1,
                 "priority": 0,

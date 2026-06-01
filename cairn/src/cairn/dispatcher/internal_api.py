@@ -28,6 +28,7 @@ Both are inert unless this internal API is explicitly enabled.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import threading
@@ -210,12 +211,25 @@ def _config_with_workers(loop: "DispatcherLoop", workers: list[WorkerConfig]) ->
 def _write_dispatch_config(loop: "DispatcherLoop", config: DispatchConfig) -> None:
     path = loop.config_path
     data = config.model_dump(mode="json")
+    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
     tmp_path = path.with_name(f".{path.name}.tmp")
-    tmp_path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-    tmp_path.replace(path)
+    tmp_path.write_text(text, encoding="utf-8")
+    try:
+        tmp_path.replace(path)
+    except OSError as exc:
+        if exc.errno != errno.EBUSY:
+            raise
+        # Docker single-file bind mounts cannot be replaced by rename(2). Fall
+        # back to rewriting the mounted file in place while preserving the same
+        # validation-before-apply flow used by the normal atomic path.
+        with path.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            LOGGER.debug("failed to remove temporary dispatcher config %s", tmp_path)
 
 
 def _validation_detail(exc: Exception) -> dict[str, str]:
@@ -281,16 +295,19 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
         running = running_counts.get(worker.name, 0)
         unhealthy_at = unhealthy_until.get(worker.name, 0.0)
         is_unhealthy = unhealthy_at > now
-        if is_unhealthy:
-            status = "unhealthy"
-        elif running > 0:
+        if running > 0:
             status = "busy"
+        elif not worker.enabled:
+            status = "disabled"
+        elif is_unhealthy:
+            status = "unhealthy"
         else:
             status = "idle"
         workers_payload.append(
             {
                 "name": worker.name,
                 "type": worker.type,
+                "enabled": worker.enabled,
                 "task_types": list(worker.task_types),
                 "max_running": worker.max_running,
                 "priority": worker.priority,

@@ -57,8 +57,15 @@ router = APIRouter(prefix="/api/workers", tags=["workers"])
 # dispatcher is absent or unresponsive.
 INTERNAL_URL_ENV = "CAIRN_DISPATCHER_INTERNAL_URL"
 INTERNAL_TIMEOUT_ENV = "CAIRN_DISPATCHER_INTERNAL_TIMEOUT"
+# Test/config operations (connectivity test, config read/write) are genuinely
+# slow — the dispatcher spins up a startup container, execs the worker CLI, and
+# tears it down — so they need a dedicated, longer timeout than the
+# latency-sensitive status poll. The 30.0s default comfortably exceeds the
+# dispatcher's own 20s healthcheck_timeout (dispatch.yaml).
+TEST_TIMEOUT_ENV = "CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT"
 DEFAULT_INTERNAL_URL = "http://127.0.0.1:8989"
 DEFAULT_INTERNAL_TIMEOUT = 2.0
+DEFAULT_INTERNAL_TEST_TIMEOUT = 30.0
 STATUS_PATH = "/internal/status"
 CONFIG_PATH = "/internal/workers/config"
 TEST_PATH = "/internal/workers/test"
@@ -83,22 +90,44 @@ def _internal_url(path: str) -> str:
     return f"{base.rstrip('/')}{path}"
 
 
-def _status_timeout() -> float:
-    """Resolve the proxy request timeout (seconds) from the env."""
-    raw = os.environ.get(INTERNAL_TIMEOUT_ENV, "").strip()
+def _resolve_timeout(env_name: str, default: float) -> float:
+    """Resolve a proxy request timeout (seconds) from an env var.
+
+    Shared parse/fallback logic for the status-polling and test/config timeout
+    resolvers: an unset, blank, non-numeric, or non-positive value falls back to
+    ``default``; a valid positive value is honored. Invalid input is logged with
+    a warning so misconfiguration is visible.
+    """
+    raw = os.environ.get(env_name, "").strip()
     if not raw:
-        return DEFAULT_INTERNAL_TIMEOUT
+        return default
     try:
         timeout = float(raw)
     except ValueError:
         LOG.warning(
             "invalid %s=%r; falling back to default %.1fs",
-            INTERNAL_TIMEOUT_ENV,
+            env_name,
             raw,
-            DEFAULT_INTERNAL_TIMEOUT,
+            default,
         )
-        return DEFAULT_INTERNAL_TIMEOUT
-    return timeout if timeout > 0 else DEFAULT_INTERNAL_TIMEOUT
+        return default
+    return timeout if timeout > 0 else default
+
+
+def _status_timeout() -> float:
+    """Resolve the status-polling proxy request timeout (seconds) from the env."""
+    return _resolve_timeout(INTERNAL_TIMEOUT_ENV, DEFAULT_INTERNAL_TIMEOUT)
+
+
+def _test_timeout() -> float:
+    """Resolve the test/config proxy request timeout (seconds) from the env.
+
+    Mirrors :func:`_status_timeout` parsing/fallback semantics but reads the
+    dedicated ``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT`` var and falls back to
+    the longer ``DEFAULT_INTERNAL_TEST_TIMEOUT`` (30.0s), so slow-but-healthy
+    test/config operations are not bound by the short status-polling timeout.
+    """
+    return _resolve_timeout(TEST_TIMEOUT_ENV, DEFAULT_INTERNAL_TEST_TIMEOUT)
 
 
 def _fetch_status_snapshot() -> dict[str, Any]:
@@ -143,10 +172,11 @@ def _request_internal_json(
     *,
     payload: dict[str, Any] | None = None,
     unavailable_message: str,
+    timeout: float,
 ) -> dict[str, Any]:
     url = _internal_url(path)
     try:
-        response = requests.request(method, url, json=payload, timeout=_status_timeout())
+        response = requests.request(method, url, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         LOG.warning("dispatcher internal request unreachable method=%s url=%s error=%s", method, url, exc)
         raise HTTPException(status_code=503, detail={"message": unavailable_message, "last_updated": None})
@@ -176,7 +206,7 @@ def _unavailable_exception() -> HTTPException:
     )
 
 
-def _map_status(internal_status: Any, *, is_unhealthy: bool, running: int) -> str:
+def _map_status(internal_status: Any, *, enabled: bool, is_unhealthy: bool, running: int) -> str:
     """Map the internal worker status onto the dashboard's idle/busy/offline.
 
     The internal API reports ``idle``/``busy``/``unhealthy``. A worker whose
@@ -184,6 +214,8 @@ def _map_status(internal_status: Any, *, is_unhealthy: bool, running: int) -> st
     (requirement 10.5). Otherwise a worker with running tasks is ``busy`` and any
     other worker is ``idle`` (requirements 9.1, 10.4/10.5 via heartbeat health).
     """
+    if not enabled or internal_status == "disabled":
+        return "disabled"
     if is_unhealthy or internal_status == "unhealthy" or internal_status == "offline":
         return "offline"
     if internal_status == "busy" or running > 0:
@@ -302,9 +334,11 @@ def list_workers() -> list[WorkerStatus]:
         running = worker.get("running")
         running_count = running if isinstance(running, int) and not isinstance(running, bool) else 0
         is_unhealthy = bool(worker.get("unhealthy"))
+        enabled = bool(worker.get("enabled", True))
 
         status = _map_status(
             worker.get("status"),
+            enabled=enabled,
             is_unhealthy=is_unhealthy,
             running=running_count,
         )
@@ -318,6 +352,7 @@ def list_workers() -> list[WorkerStatus]:
             WorkerStatus(
                 name=name,
                 type=worker_type if isinstance(worker_type, str) else "",
+                enabled=enabled,
                 status=status,
                 current_task=current_task,
                 tasks_completed=tasks_completed,
@@ -335,6 +370,7 @@ def get_worker_config() -> WorkerConfigResponse:
         "GET",
         CONFIG_PATH,
         unavailable_message="Worker config unavailable",
+        timeout=_test_timeout(),
     )
     return WorkerConfigResponse.model_validate(payload)
 
@@ -351,6 +387,7 @@ def update_worker_config(config: WorkerConfigUpdate) -> WorkerConfigResponse:
         CONFIG_PATH,
         payload=config.model_dump(mode="json"),
         unavailable_message="Worker config update failed",
+        timeout=_test_timeout(),
     )
     return WorkerConfigResponse.model_validate(payload)
 
@@ -363,6 +400,7 @@ def test_worker_config(request: WorkerConnectionTestRequest) -> WorkerConnection
         TEST_PATH,
         payload=request.model_dump(mode="json"),
         unavailable_message="Worker connectivity test failed",
+        timeout=_test_timeout(),
     )
     return WorkerConnectionTestResult.model_validate(payload)
 

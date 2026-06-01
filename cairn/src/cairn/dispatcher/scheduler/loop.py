@@ -37,6 +37,7 @@ class WorkerSelection:
     blocked_unhealthy: list[str]
     blocked_rejected: list[str]
     blocked_task_type: list[str]
+    blocked_disabled: list[str]
 
 
 class DispatcherLoop:
@@ -76,7 +77,7 @@ class DispatcherLoop:
         without touching active futures or the task execution path.
         """
         with self._config_lock:
-            worker_names = {worker.name for worker in config.workers}
+            worker_names = {worker.name for worker in config.workers if worker.enabled}
             self.config = config
             for worker_name in list(self.worker_unhealthy_until):
                 if worker_name not in worker_names:
@@ -555,10 +556,14 @@ class DispatcherLoop:
         blocked_unhealthy: list[str] = []
         blocked_rejected: list[str] = []
         blocked_task_type: list[str] = []
+        blocked_disabled: list[str] = []
         running_counts = self._worker_counts()
         with self._config_lock:
             workers = list(self.config.workers)
         for worker in workers:
+            if not worker.enabled:
+                blocked_disabled.append(worker.name)
+                continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
                 continue
@@ -577,13 +582,14 @@ class DispatcherLoop:
             candidates.append(worker)
         if not candidates:
             LOG.debug(
-                "worker selection project=%s task=%s no candidates blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s",
+                "worker selection project=%s task=%s no candidates blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s blocked_disabled=%s",
                 project_id,
                 task_type,
                 blocked_busy,
                 blocked_unhealthy,
                 blocked_rejected,
                 blocked_task_type,
+                blocked_disabled,
             )
             return WorkerSelection(
                 worker=None,
@@ -591,10 +597,11 @@ class DispatcherLoop:
                 blocked_unhealthy=blocked_unhealthy,
                 blocked_rejected=blocked_rejected,
                 blocked_task_type=blocked_task_type,
+                blocked_disabled=blocked_disabled,
             )
         ordered = choose_worker(candidates, running_counts)
         LOG.debug(
-            "worker selection project=%s task=%s candidates=%s blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s chosen=%s",
+            "worker selection project=%s task=%s candidates=%s blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s blocked_disabled=%s chosen=%s",
             project_id,
             task_type,
             [f"{worker.name}({running_counts.get(worker.name, 0)}/{worker.max_running},p{worker.priority})" for worker in candidates],
@@ -602,6 +609,7 @@ class DispatcherLoop:
             blocked_unhealthy,
             blocked_rejected,
             blocked_task_type,
+            blocked_disabled,
             ordered[0].name if ordered else None,
         )
         return WorkerSelection(
@@ -610,6 +618,7 @@ class DispatcherLoop:
             blocked_unhealthy=blocked_unhealthy,
             blocked_rejected=blocked_rejected,
             blocked_task_type=blocked_task_type,
+            blocked_disabled=blocked_disabled,
         )
 
     def _worker_counts(self) -> dict[str, int]:

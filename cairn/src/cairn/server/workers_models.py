@@ -36,7 +36,8 @@ class WorkerStatus(BaseModel):
 
     name: str
     type: str
-    status: Literal["idle", "busy", "offline"]
+    enabled: bool = True
+    status: Literal["idle", "busy", "offline", "disabled"]
     current_task: str | None = None
     tasks_completed: int
     avg_duration_seconds: float | None = None
@@ -79,6 +80,7 @@ class WorkerConfigItem(BaseModel):
 
     name: str = Field(min_length=1)
     type: WorkerType
+    enabled: bool = True
     task_types: list[TaskType]
     max_running: int = Field(gt=0)
     priority: int = Field(ge=0)

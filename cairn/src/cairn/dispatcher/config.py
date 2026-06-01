@@ -168,6 +168,7 @@ class WorkerConfig(BaseModel):
 
     name: str
     type: WorkerType
+    enabled: bool = True
     task_types: list[TaskType]
     max_running: int = Field(gt=0)
     priority: int = Field(ge=0)
@@ -242,6 +243,8 @@ class DispatchConfig(BaseModel):
             raise ValueError("worker names must be unique")
         if not self.workers:
             raise ValueError("workers must not be empty")
+        if not any(worker.enabled for worker in self.workers):
+            raise ValueError("at least one worker must be enabled")
         if self.runtime.max_project_workers > self.runtime.max_workers:
             raise ValueError("max_project_workers cannot exceed max_workers")
         return self

@@ -13,6 +13,11 @@ services:
       - ./datas/cairn/:/root/.local/share/cairn/
     environment:
       CAIRN_DISPATCHER_INTERNAL_URL: "http://cairn-dispatcher:8989"
+      # Timeout (seconds) for the longer-running worker connectivity test and
+      # config read/write proxy calls to the dispatcher internal API. Independent
+      # of CAIRN_DISPATCHER_INTERNAL_TIMEOUT (status polling, default 2.0s).
+      # Defaults to 30s in code; set here only to override.
+      CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT: "30"
     healthcheck:
       test:
         - "CMD"
