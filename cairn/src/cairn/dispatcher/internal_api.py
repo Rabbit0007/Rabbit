@@ -1,8 +1,9 @@
-"""Optional, read-only internal status API for the dispatcher.
+"""Optional internal API for the dispatcher.
 
-This module exposes a *read-only* view of the live ``DispatcherLoop`` state so
-that the product server's worker dashboard can poll it. It is intentionally
-defensive and completely optional:
+This module exposes a live ``DispatcherLoop`` status view for the product
+server's worker dashboard. It can also manage the worker list when the operator
+uses the product UI's worker configuration panel. It is intentionally defensive
+and completely optional:
 
 * It is **opt-in**: it only starts when ``CAIRN_DISPATCHER_INTERNAL_API`` is set
   to a truthy value. Existing deployments are unaffected by default.
@@ -11,9 +12,10 @@ defensive and completely optional:
   running normally.
 * It is **localhost-only** by default (``127.0.0.1``) on a configurable port
   (default ``8989``).
-* It **never mutates** scheduler state. The status endpoint only reads existing
-  fields, taking defensive copies to tolerate concurrent mutation from the
-  scheduler thread.
+* The status endpoint only reads existing fields, taking defensive copies to
+  tolerate concurrent mutation from the scheduler thread.
+* Worker configuration writes are validated before being persisted/applied. A
+  failed validation or file write leaves the running dispatcher config intact.
 
 The scheduler loop itself is not modified by importing this module. The only
 hooks into the loop are:
@@ -33,6 +35,12 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
+import yaml
+from pydantic import ValidationError
+
+from cairn.dispatcher.config import DispatchConfig, WorkerConfig
+from cairn.dispatcher.runtime.startup_healthcheck import run_single_startup_healthcheck
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cairn.dispatcher.scheduler.loop import DispatcherLoop
 
@@ -45,6 +53,10 @@ PORT_ENV = "CAIRN_DISPATCHER_INTERNAL_PORT"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8989
 TASK_DESCRIPTION_MAX = 120
+WORKER_CONFIG_PATH = "/internal/workers/config"
+WORKER_TEST_PATH = "/internal/workers/test"
+SECRET_MASK = "********"
+SECRET_KEY_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -104,6 +116,134 @@ def _truncate(text: str, limit: int = TASK_DESCRIPTION_MAX) -> str:
     return text[: limit - 3] + "..."
 
 
+def _is_secret_env_key(key: str) -> bool:
+    upper = key.upper()
+    return any(marker in upper for marker in SECRET_KEY_MARKERS)
+
+
+def _worker_payload(worker: WorkerConfig) -> dict[str, Any]:
+    payload = worker.model_dump(mode="json")
+    env: dict[str, str] = {}
+    secret_keys: list[str] = []
+    for key, value in worker.env.items():
+        if _is_secret_env_key(key):
+            secret_keys.append(key)
+            env[key] = SECRET_MASK if value else ""
+        else:
+            env[key] = value
+    payload["env"] = env
+    payload["secret_env_keys"] = sorted(secret_keys)
+    return payload
+
+
+def _workers_config_payload(loop: "DispatcherLoop") -> dict[str, Any]:
+    lock = getattr(loop, "_config_lock", None)
+    if lock is None:
+        workers = list(loop.config.workers)
+    else:
+        with lock:
+            workers = list(loop.config.workers)
+    return {
+        "workers": [_worker_payload(worker) for worker in workers],
+    }
+
+
+def _existing_workers_by_name(loop: "DispatcherLoop") -> dict[str, WorkerConfig]:
+    lock = getattr(loop, "_config_lock", None)
+    if lock is None:
+        workers = list(loop.config.workers)
+    else:
+        with lock:
+            workers = list(loop.config.workers)
+    return {worker.name: worker for worker in workers}
+
+
+def _preserve_masked_secrets(
+    raw_workers: list[Any],
+    existing_workers: dict[str, WorkerConfig],
+) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    for raw_worker in raw_workers:
+        if not isinstance(raw_worker, dict):
+            raise ValueError("worker entries must be objects")
+        worker_data = dict(raw_worker)
+        name = worker_data.get("name")
+        env_raw = worker_data.get("env") or {}
+        if not isinstance(env_raw, dict):
+            raise ValueError(f"worker {name or '<unknown>'} env must be an object")
+        env = {str(key): str(value) for key, value in env_raw.items()}
+        existing = existing_workers.get(name) if isinstance(name, str) else None
+        if existing is not None:
+            for key, value in list(env.items()):
+                if _is_secret_env_key(key) and (not value.strip() or value == SECRET_MASK):
+                    old_value = existing.env.get(key)
+                    if old_value:
+                        env[key] = old_value
+        worker_data["env"] = env
+        worker_data.pop("secret_env_keys", None)
+        resolved.append(worker_data)
+    return resolved
+
+
+def _validate_worker_payloads(loop: "DispatcherLoop", payload: Any) -> list[WorkerConfig]:
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    raw_workers = payload.get("workers")
+    if not isinstance(raw_workers, list):
+        raise ValueError("workers must be an array")
+    worker_data = _preserve_masked_secrets(raw_workers, _existing_workers_by_name(loop))
+    return [WorkerConfig.model_validate(worker) for worker in worker_data]
+
+
+def _config_with_workers(loop: "DispatcherLoop", workers: list[WorkerConfig]) -> DispatchConfig:
+    lock = getattr(loop, "_config_lock", None)
+    if lock is None:
+        current = loop.config
+    else:
+        with lock:
+            current = loop.config
+    data = current.model_dump(mode="json")
+    data["workers"] = [worker.model_dump(mode="json") for worker in workers]
+    return DispatchConfig.model_validate(data)
+
+
+def _write_dispatch_config(loop: "DispatcherLoop", config: DispatchConfig) -> None:
+    path = loop.config_path
+    data = config.model_dump(mode="json")
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def _validation_detail(exc: Exception) -> dict[str, str]:
+    if isinstance(exc, ValidationError):
+        parts: list[str] = []
+        for error in exc.errors(include_input=False):
+            loc = ".".join(str(item) for item in error.get("loc", ()))
+            msg = str(error.get("msg", "validation error"))
+            parts.append(f"{loc}: {msg}" if loc else msg)
+        return {"message": "; ".join(parts) or "worker config validation failed"}
+    return {"message": str(exc)}
+
+
+def _healthcheck_payload(result: Any) -> dict[str, Any]:
+    preview = result.response_preview or result.stderr_preview or ""
+    return {
+        "worker_name": result.worker_name,
+        "ok": result.ok,
+        "returncode": result.returncode,
+        "duration_ms": result.duration_ms,
+        "http_status": result.http_status,
+        "response_preview": result.response_preview,
+        "stderr_preview": result.stderr_preview,
+        "preview": preview,
+        "command": result.command,
+    }
+
+
 def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
     """Build a read-only snapshot dict of the dispatcher's live state.
 
@@ -112,8 +252,12 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
     """
     now = time.time()
 
-    # Static config: workers are loaded once and not mutated at runtime.
-    workers_config = _safe_copy(lambda: list(loop.config.workers))
+    lock = getattr(loop, "_config_lock", None)
+    if lock is None:
+        workers_config = _safe_copy(lambda: list(loop.config.workers))
+    else:
+        with lock:
+            workers_config = list(loop.config.workers)
 
     # Live, mutable state -- take defensive copies.
     running_tasks = _safe_copy(lambda: list(loop.futures.values()))
@@ -231,8 +375,8 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
 
 
 def create_internal_app(loop: "DispatcherLoop"):
-    """Create the minimal FastAPI app exposing the read-only status endpoint."""
-    from fastapi import FastAPI
+    """Create the minimal FastAPI app exposing dispatcher internal endpoints."""
+    from fastapi import FastAPI, HTTPException
 
     app = FastAPI(title="Cairn Dispatcher Internal API", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -245,6 +389,63 @@ def create_internal_app(loop: "DispatcherLoop"):
         # build_status_snapshot is read-only and never raises; if it somehow
         # does, FastAPI returns a 500 and the dispatcher loop is unaffected.
         return build_status_snapshot(loop)
+
+    @app.get(WORKER_CONFIG_PATH)
+    def worker_config() -> dict[str, Any]:
+        return _workers_config_payload(loop)
+
+    @app.put(WORKER_CONFIG_PATH)
+    def update_worker_config(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            workers = _validate_worker_payloads(loop, payload)
+            config = _config_with_workers(loop, workers)
+        except (ValueError, ValidationError) as exc:
+            raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
+
+        try:
+            _write_dispatch_config(loop, config)
+        except Exception as exc:
+            LOG.warning("failed to persist dispatcher worker config; keeping current config", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail={"message": f"failed to write dispatcher config: {exc}"},
+            ) from exc
+
+        apply_config = getattr(loop, "apply_config", None)
+        if callable(apply_config):
+            apply_config(config)
+        else:  # pragma: no cover - compatibility fallback for older loops
+            loop.config = config
+        return _workers_config_payload(loop)
+
+    @app.post(WORKER_TEST_PATH)
+    def test_worker(payload: dict[str, Any]) -> dict[str, Any]:
+        worker_payload = payload.get("worker") if isinstance(payload, dict) else None
+        if not isinstance(worker_payload, dict):
+            raise HTTPException(status_code=422, detail={"message": "worker must be an object"})
+        try:
+            worker_data = _preserve_masked_secrets([worker_payload], _existing_workers_by_name(loop))[0]
+            worker = WorkerConfig.model_validate(worker_data)
+            config = _config_with_workers(loop, [worker])
+        except (ValueError, ValidationError) as exc:
+            raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
+
+        try:
+            result = run_single_startup_healthcheck(config, loop.container_manager, worker)
+        except Exception as exc:
+            LOG.warning("worker connectivity test failed before command execution worker=%s", worker.name, exc_info=True)
+            return {
+                "worker_name": worker.name,
+                "ok": False,
+                "returncode": 1,
+                "duration_ms": 0,
+                "http_status": None,
+                "response_preview": "",
+                "stderr_preview": str(exc),
+                "preview": str(exc),
+                "command": "-",
+            }
+        return _healthcheck_payload(result)
 
     return app
 

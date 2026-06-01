@@ -78,6 +78,30 @@ def run_startup_healthchecks(
     return results
 
 
+def run_single_startup_healthcheck(
+    config: DispatchConfig,
+    container_manager: ContainerManager,
+    worker: WorkerConfig,
+) -> StartupHealthcheckResult:
+    """Run the same startup connectivity check for one worker.
+
+    Used by the runtime worker-config UI. It intentionally reuses the existing
+    startup container healthcheck path so a successful test means the worker can
+    run from the same container environment the dispatcher uses.
+    """
+    container_name = container_manager.create_startup_container()
+    try:
+        return _run_worker_healthcheck(
+            container_manager,
+            container_name,
+            worker,
+            config.runtime.healthcheck_timeout,
+        )
+    finally:
+        LOG.debug("removing single startup healthcheck container container=%s", container_name)
+        container_manager.remove_container(container_name, force=True)
+
+
 def format_failure_summary(results: list[StartupHealthcheckResult]) -> str:
     failed = [result for result in results if not result.ok]
     if not failed:

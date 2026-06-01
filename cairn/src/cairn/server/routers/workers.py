@@ -1,11 +1,10 @@
 """Worker dashboard router.
 
 Additive router exposing the ``/api/workers`` endpoints that back the worker
-dashboard. It does **not** touch any dispatcher, scheduler, or worker-adapter
-code: the live worker state is read by *proxying* over HTTP to the dispatcher's
-optional read-only internal status API (``cairn.dispatcher.internal_api``,
-created by task 5.1), and the per-worker task history is read from the
-``worker_task_history`` table created by :mod:`cairn.server.product_db`.
+dashboard. Live worker state and runtime worker configuration are proxied over
+HTTP to the dispatcher's optional internal API
+(``cairn.dispatcher.internal_api``), while per-worker task history is read from
+the ``worker_task_history`` table created by :mod:`cairn.server.product_db`.
 
 Two endpoints are provided:
 
@@ -38,13 +37,20 @@ import requests
 from fastapi import APIRouter, HTTPException, Path
 
 from cairn.server.db import get_conn
-from cairn.server.workers_models import WorkerStatus, WorkerTaskHistoryEntry
+from cairn.server.workers_models import (
+    WorkerConfigResponse,
+    WorkerConfigUpdate,
+    WorkerConnectionTestRequest,
+    WorkerConnectionTestResult,
+    WorkerStatus,
+    WorkerTaskHistoryEntry,
+)
 
 LOG = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workers", tags=["workers"])
 
-# Configuration for the proxy call to the dispatcher's read-only internal API.
+# Configuration for the proxy call to the dispatcher's internal API.
 # The base URL is configurable so the product server and dispatcher can run on
 # different hosts/ports; the default matches the internal API's own defaults
 # (127.0.0.1:8989). A short timeout keeps the dashboard responsive even when the
@@ -54,6 +60,8 @@ INTERNAL_TIMEOUT_ENV = "CAIRN_DISPATCHER_INTERNAL_TIMEOUT"
 DEFAULT_INTERNAL_URL = "http://127.0.0.1:8989"
 DEFAULT_INTERNAL_TIMEOUT = 2.0
 STATUS_PATH = "/internal/status"
+CONFIG_PATH = "/internal/workers/config"
+TEST_PATH = "/internal/workers/test"
 
 # The number of most-recent history rows returned per worker (requirement 11.1).
 HISTORY_LIMIT = 20
@@ -68,6 +76,11 @@ def _status_url() -> str:
     """
     base = os.environ.get(INTERNAL_URL_ENV, "").strip() or DEFAULT_INTERNAL_URL
     return f"{base.rstrip('/')}{STATUS_PATH}"
+
+
+def _internal_url(path: str) -> str:
+    base = os.environ.get(INTERNAL_URL_ENV, "").strip() or DEFAULT_INTERNAL_URL
+    return f"{base.rstrip('/')}{path}"
 
 
 def _status_timeout() -> float:
@@ -122,6 +135,37 @@ def _fetch_status_snapshot() -> dict[str, Any]:
         LOG.warning("dispatcher internal status returned unexpected JSON shape url=%s", url)
         raise _unavailable_exception()
     return payload
+
+
+def _request_internal_json(
+    method: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    unavailable_message: str,
+) -> dict[str, Any]:
+    url = _internal_url(path)
+    try:
+        response = requests.request(method, url, json=payload, timeout=_status_timeout())
+    except requests.RequestException as exc:
+        LOG.warning("dispatcher internal request unreachable method=%s url=%s error=%s", method, url, exc)
+        raise HTTPException(status_code=503, detail={"message": unavailable_message, "last_updated": None})
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+
+    if response.status_code >= 400:
+        detail: Any = {"message": unavailable_message}
+        if isinstance(body, dict):
+            detail = body.get("detail", body)
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    if not isinstance(body, dict):
+        LOG.warning("dispatcher internal request returned unexpected JSON method=%s url=%s", method, url)
+        raise HTTPException(status_code=503, detail={"message": unavailable_message, "last_updated": None})
+    return body
 
 
 def _unavailable_exception() -> HTTPException:
@@ -226,7 +270,7 @@ def _heartbeat_seconds_ago(snapshot: dict[str, Any], worker_name: str) -> float 
 def list_workers() -> list[WorkerStatus]:
     """Return the live status of every registered worker.
 
-    Proxies to the dispatcher's read-only internal status endpoint and reshapes
+    Proxies to the dispatcher's internal status endpoint and reshapes
     the snapshot into one :class:`WorkerStatus` per registered worker
     (requirement 9.1). For a busy worker, the current task description is
     included (truncated to 120 characters by the model — requirement 9.4). Health
@@ -282,6 +326,45 @@ def list_workers() -> list[WorkerStatus]:
             )
         )
     return result
+
+
+@router.get("/config", response_model=WorkerConfigResponse)
+def get_worker_config() -> WorkerConfigResponse:
+    """Return editable worker configuration with secret values masked."""
+    payload = _request_internal_json(
+        "GET",
+        CONFIG_PATH,
+        unavailable_message="Worker config unavailable",
+    )
+    return WorkerConfigResponse.model_validate(payload)
+
+
+@router.put("/config", response_model=WorkerConfigResponse)
+def update_worker_config(config: WorkerConfigUpdate) -> WorkerConfigResponse:
+    """Persist and apply the dispatcher worker list.
+
+    The dispatcher validates and writes the underlying YAML file before applying
+    the new config, so validation/write failures leave active scheduling intact.
+    """
+    payload = _request_internal_json(
+        "PUT",
+        CONFIG_PATH,
+        payload=config.model_dump(mode="json"),
+        unavailable_message="Worker config update failed",
+    )
+    return WorkerConfigResponse.model_validate(payload)
+
+
+@router.post("/config/test", response_model=WorkerConnectionTestResult)
+def test_worker_config(request: WorkerConnectionTestRequest) -> WorkerConnectionTestResult:
+    """Run the dispatcher's own startup healthcheck for a draft worker config."""
+    payload = _request_internal_json(
+        "POST",
+        TEST_PATH,
+        payload=request.model_dump(mode="json"),
+        unavailable_message="Worker connectivity test failed",
+    )
+    return WorkerConnectionTestResult.model_validate(payload)
 
 
 def _build_history_description(

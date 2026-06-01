@@ -2144,6 +2144,11 @@
     </div>
     <div class="flex-1"></div>
     <div class="app-section-actions flex items-center gap-2">
+      <button type="button" @click="openWorkerConfigModal()"
+        class="h-7 px-2.5 rounded-lg border border-brand-200 text-xs text-brand-600 bg-brand-50/70 hover:bg-brand-50 hover:border-brand-300 transition inline-flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        <span>新增 Worker</span>
+      </button>
       <!-- Live polling indicator + last-update time (requirements 9.2, 10.4). -->
       <span class="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-slate-400">
         <span class="h-1.5 w-1.5 rounded-full" :class="workersConnLost ? 'bg-slate-300' : 'bg-emerald-400 animate-pulse'"></span>
@@ -2212,7 +2217,16 @@
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.1em] border shrink-0"
                   :class="workerStatusBadgeClass(w.status)" x-text="workerStatusLabel(w.status)"></span>
               </div>
-              <p class="text-[11px] text-slate-400 truncate mt-0.5" x-text="w.type || '未知类型'"></p>
+              <p class="text-[11px] text-slate-400 truncate mt-0.5" x-text="workerStatusSubtitle(w)"></p>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button type="button" @click.stop="testSavedWorker(w.name)"
+                class="h-7 px-2 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition disabled:opacity-40"
+                :disabled="workerConfigTesting === w.name">
+                <span x-text="workerConfigTesting === w.name ? '测试中' : '测试'"></span>
+              </button>
+              <button type="button" @click.stop="openWorkerConfigModal(w.name)"
+                class="h-7 px-2 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">编辑</button>
             </div>
           </div>
 
@@ -2290,6 +2304,145 @@
         </div>
       </template>
     </div>
+    </div>
+  </div>
+</div>
+
+<!-- Worker Config Modal -->
+<div x-show="showWorkerConfigModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeWorkerConfigModal()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] overflow-hidden border border-slate-200/60" @click.stop>
+    <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-slate-800" x-text="workerFormMode === 'edit' ? '编辑 Worker' : '新增 Worker'"></h3>
+        <p class="text-xs text-slate-400 mt-0.5">配置模型、并发与任务类型；保存后会写回调度器配置并用于后续任务。</p>
+      </div>
+      <button type="button" @click="closeWorkerConfigModal()" class="h-8 w-8 rounded-lg border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition flex items-center justify-center">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="p-6 overflow-y-auto max-h-[calc(88vh-140px)]">
+      <div x-show="workerConfigError" x-cloak class="mb-4 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700" x-text="workerConfigError"></div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">Worker 名称</label>
+          <input x-model.trim="workerForm.name" placeholder="例如 claude-deepseek-1"
+            class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">运行器</label>
+          <select x-model="workerForm.type" @change="onWorkerTypeChange()"
+            class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition bg-white">
+            <option value="claudecode">Claude Code / Anthropic Messages</option>
+            <option value="codex">Codex / OpenAI Responses</option>
+            <option value="pi">Pi Provider</option>
+            <option value="mock">Mock 本地测试</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">模型供应商预设</label>
+          <select x-model="workerForm.provider" @change="applyWorkerProviderPreset()"
+            class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition bg-white">
+            <template x-for="provider in workerProviderOptionsFor(workerForm.type)" :key="provider.id">
+              <option :value="provider.id" x-text="provider.label"></option>
+            </template>
+          </select>
+          <p class="text-[11px] text-slate-400 mt-1" x-text="workerSelectedProviderNote()"></p>
+        </div>
+
+        <template x-if="workerForm.type !== 'mock'">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">模型名</label>
+            <input x-model.trim="workerForm.model" placeholder="填写供应商支持的模型名"
+              class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+        </template>
+
+        <template x-if="workerForm.type !== 'mock'">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">Base URL</label>
+            <input x-model.trim="workerForm.base_url" placeholder="https://..."
+              class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+        </template>
+
+        <template x-if="workerForm.type !== 'mock'">
+          <div class="md:col-span-2">
+            <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">API Key / Token</label>
+            <input x-model="workerForm.api_key" type="password" autocomplete="new-password" placeholder="保存后前端只会显示掩码"
+              class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+            <p class="text-[11px] text-slate-400 mt-1">编辑已有 Worker 时，保留掩码或留空会沿用原密钥；新建 Worker 必须填写有效密钥。</p>
+          </div>
+        </template>
+
+        <template x-if="workerForm.type === 'pi'">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">Provider API</label>
+            <input x-model.trim="workerForm.pi_provider_api" placeholder="openai / anthropic / responses"
+              class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+        </template>
+
+        <template x-if="workerForm.type === 'pi'">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">上下文窗口（可选）</label>
+            <input x-model.trim="workerForm.pi_context_window" inputmode="numeric" placeholder="例如 128000"
+              class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+        </template>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">最大并发</label>
+          <input x-model.number="workerForm.max_running" type="number" min="1"
+            class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-1.5">优先级</label>
+          <input x-model.number="workerForm.priority" type="number" min="0"
+            class="w-full h-10 px-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <p class="text-[11px] text-slate-400 mt-1">数字越小越优先。</p>
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-[0.12em] mb-2">可执行任务</label>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="task in workerTaskTypeOptions" :key="task.id">
+              <label class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                <input type="checkbox" class="rounded border-slate-300 text-brand-500 focus:ring-brand-100" :value="task.id" x-model="workerForm.task_types">
+                <span x-text="task.label"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="workerConfigTestResult" x-cloak class="mt-4 rounded-2xl border p-4"
+        :class="workerConfigTestResult && workerConfigTestResult.ok ? 'bg-emerald-50/60 border-emerald-200' : 'bg-rose-50/60 border-rose-200'">
+        <div class="flex items-center justify-between gap-3">
+          <p class="text-sm font-semibold" :class="workerConfigTestResult && workerConfigTestResult.ok ? 'text-emerald-700' : 'text-rose-700'"
+            x-text="workerConfigTestResult && workerConfigTestResult.ok ? '连通性测试通过' : '连通性测试失败'"></p>
+          <span class="text-xs tabular-nums text-slate-500" x-text="workerConfigTestResult ? (workerConfigTestResult.duration_ms + 'ms') : ''"></span>
+        </div>
+        <p class="mt-2 text-xs text-slate-600 break-words [overflow-wrap:anywhere]" x-text="workerConfigTestPreview()"></p>
+      </div>
+    </div>
+
+    <div class="px-6 py-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+      <button type="button" x-show="workerFormMode === 'edit'" @click="deleteWorkerConfig()" :disabled="workerConfigSaving"
+        class="px-4 py-2 rounded-xl border border-rose-200 text-sm text-rose-500 hover:bg-rose-50 transition disabled:opacity-40">删除 Worker</button>
+      <div class="flex-1"></div>
+      <button type="button" @click="testWorkerForm()" :disabled="workerConfigTesting === '__draft__' || workerConfigSaving"
+        class="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-40">
+        <span x-text="workerConfigTesting === '__draft__' ? '正在测试…' : '测试连通性'"></span>
+      </button>
+      <button type="button" @click="closeWorkerConfigModal()" :disabled="workerConfigSaving" class="px-4 py-2 rounded-xl text-sm text-slate-500 hover:bg-slate-50 transition disabled:opacity-40">取消</button>
+      <button type="button" @click="saveWorkerConfig()" :disabled="workerConfigSaving"
+        class="px-5 py-2 rounded-xl text-sm font-medium text-white bg-brand-500 hover:bg-brand-600 shadow-sm shadow-brand-200 transition disabled:opacity-40">
+        <span x-text="workerConfigSaving ? '正在保存…' : '保存配置'"></span>
+      </button>
     </div>
   </div>
 </div>
@@ -2975,6 +3128,42 @@ function cairnApp() {
     workerHistory: {},
     workerHistoryLoading: {},
     workerHistoryError: {},
+    workerConfigs: [],
+    workerConfigLoading: false,
+    workerConfigSaving: false,
+    workerConfigTesting: false,
+    workerConfigError: '',
+    workerConfigTestResult: null,
+    showWorkerConfigModal: false,
+    workerFormMode: 'create',
+    workerFormOriginalName: '',
+    workerForm: {
+      name: '',
+      type: 'claudecode',
+      provider: 'deepseek-anthropic',
+      model: 'deepseek-v4-pro',
+      base_url: 'https://api.deepseek.com/anthropic',
+      api_key: '',
+      pi_provider_api: 'openai',
+      pi_context_window: '',
+      task_types: ['bootstrap', 'reason', 'explore'],
+      max_running: 1,
+      priority: 0,
+    },
+    workerTaskTypeOptions: [
+      { id: 'bootstrap', label: '启动探索' },
+      { id: 'reason', label: '判断/规划' },
+      { id: 'explore', label: '执行探索' },
+    ],
+    workerProviderOptions: [
+      { id: 'deepseek-anthropic', type: 'claudecode', label: 'DeepSeek（Claude Code 兼容）', model: 'deepseek-v4-pro', baseUrl: 'https://api.deepseek.com/anthropic', note: '使用 Anthropic Messages 协议，适合当前 Claude Code worker。' },
+      { id: 'anthropic-custom', type: 'claudecode', label: 'Anthropic Messages 自定义', model: '', baseUrl: 'https://api.anthropic.com', note: '填写供应商支持的 Claude/Anthropic Messages 模型名。' },
+      { id: 'codex-openai', type: 'codex', label: 'OpenAI Responses', model: '', baseUrl: 'https://api.openai.com/v1', note: '使用 Codex worker 的 OpenAI Responses API。' },
+      { id: 'codex-compatible', type: 'codex', label: 'OpenAI Responses 兼容服务', model: '', baseUrl: '', note: '仅适用于支持 /responses 的兼容服务；普通 chat/completions 服务可能无法通过测试。' },
+      { id: 'pi-openai', type: 'pi', label: 'Pi / OpenAI 兼容', model: '', baseUrl: '', providerApi: 'openai', note: '通过 Pi 的 provider 配置接入 OpenAI 兼容服务。' },
+      { id: 'pi-custom', type: 'pi', label: 'Pi 自定义 Provider', model: '', baseUrl: '', providerApi: '', note: '高级模式：按 Pi provider API 填写模型、Base URL 和 API 类型。' },
+      { id: 'mock-local', type: 'mock', label: 'Mock 本地测试', model: '', baseUrl: '', note: '不调用外部模型，适合验证调度链路。' },
+    ],
 
     // Templates state (task 13.1, requirements 12.1, 12.2, 13.2). `templates`
     // holds the built-in templates merged with the user's custom templates from
@@ -3388,6 +3577,7 @@ function cairnApp() {
     // while already polling is a no-op so re-entry from the router is safe.
     startWorkerPolling() {
       this.loadWorkers();
+      this.loadWorkerConfig();
       if (this.workersPollTimer) return;
       this.workersPollTimer = setInterval(() => {
         // Stop quietly if the session ended or the user navigated away
@@ -3432,6 +3622,295 @@ function cairnApp() {
       } finally {
         this.workersLoading = false;
       }
+    },
+
+    async loadWorkerConfig() {
+      this.workerConfigLoading = true;
+      try {
+        const payload = await this.api('GET', '/api/workers/config');
+        this.workerConfigs = Array.isArray(payload.workers) ? payload.workers : [];
+        this.workerConfigError = '';
+      } catch (e) {
+        this.workerConfigError = e.message || '加载 Worker 配置失败';
+        console.error('worker config load failed', e);
+      } finally {
+        this.workerConfigLoading = false;
+      }
+    },
+
+    workerProviderOptionsFor(type) {
+      return this.workerProviderOptions.filter(provider => provider.type === type);
+    },
+
+    workerSelectedProvider() {
+      return this.workerProviderOptions.find(provider => provider.id === this.workerForm.provider) || null;
+    },
+
+    workerSelectedProviderNote() {
+      const provider = this.workerSelectedProvider();
+      return provider ? provider.note : '';
+    },
+
+    workerDefaultForm(type = 'claudecode') {
+      const provider = this.workerProviderOptionsFor(type)[0] || this.workerProviderOptions[0];
+      return {
+        name: '',
+        type,
+        provider: provider ? provider.id : '',
+        model: provider ? provider.model : '',
+        base_url: provider ? provider.baseUrl : '',
+        api_key: '',
+        pi_provider_api: provider && provider.providerApi ? provider.providerApi : 'openai',
+        pi_context_window: '',
+        task_types: ['bootstrap', 'reason', 'explore'],
+        max_running: 1,
+        priority: 0,
+      };
+    },
+
+    onWorkerTypeChange() {
+      const type = this.workerForm.type || 'claudecode';
+      this.workerForm = { ...this.workerDefaultForm(type), name: this.workerForm.name };
+    },
+
+    applyWorkerProviderPreset() {
+      const provider = this.workerSelectedProvider();
+      if (!provider) return;
+      this.workerForm.type = provider.type;
+      if (provider.model) this.workerForm.model = provider.model;
+      this.workerForm.base_url = provider.baseUrl || this.workerForm.base_url || '';
+      if (provider.providerApi !== undefined) this.workerForm.pi_provider_api = provider.providerApi;
+      if (provider.type === 'mock') {
+        this.workerForm.model = '';
+        this.workerForm.base_url = '';
+        this.workerForm.api_key = '';
+      }
+    },
+
+    workerConfigByName(name) {
+      return this.workerConfigs.find(worker => worker.name === name) || null;
+    },
+
+    workerConfigModelName(config) {
+      if (!config || !config.env) return '';
+      return config.env.ANTHROPIC_MODEL || config.env.CODEX_MODEL || config.env.PI_MODEL || '';
+    },
+
+    workerStatusSubtitle(worker) {
+      const config = this.workerConfigByName(worker.name);
+      const model = this.workerConfigModelName(config);
+      if (model) return `${worker.type || '未知类型'} · ${model}`;
+      return worker.type || '未知类型';
+    },
+
+    inferWorkerProvider(worker) {
+      const env = worker.env || {};
+      const base = String(env.ANTHROPIC_BASE_URL || env.CODEX_BASE_URL || env.PI_BASE_URL || '').toLowerCase();
+      if (worker.type === 'mock') return 'mock-local';
+      if (worker.type === 'claudecode') {
+        if (base.includes('deepseek')) return 'deepseek-anthropic';
+        return 'anthropic-custom';
+      }
+      if (worker.type === 'codex') {
+        if (base.includes('api.openai.com')) return 'codex-openai';
+        return 'codex-compatible';
+      }
+      if (worker.type === 'pi') {
+        return env.PI_PROVIDER_API ? 'pi-custom' : 'pi-openai';
+      }
+      return this.workerProviderOptionsFor(worker.type)[0]?.id || '';
+    },
+
+    workerConfigToForm(worker) {
+      const env = worker.env || {};
+      const form = this.workerDefaultForm(worker.type);
+      form.name = worker.name || '';
+      form.provider = this.inferWorkerProvider(worker);
+      form.task_types = Array.isArray(worker.task_types) ? [...worker.task_types] : ['bootstrap', 'reason', 'explore'];
+      form.max_running = worker.max_running || 1;
+      form.priority = worker.priority || 0;
+      if (worker.type === 'claudecode') {
+        form.model = env.ANTHROPIC_MODEL || '';
+        form.base_url = env.ANTHROPIC_BASE_URL || '';
+        form.api_key = env.ANTHROPIC_AUTH_TOKEN || '';
+      } else if (worker.type === 'codex') {
+        form.model = env.CODEX_MODEL || '';
+        form.base_url = env.CODEX_BASE_URL || '';
+        form.api_key = env.OPENAI_API_KEY || '';
+      } else if (worker.type === 'pi') {
+        form.model = env.PI_MODEL || '';
+        form.base_url = env.PI_BASE_URL || '';
+        form.api_key = env.PI_API_KEY || '';
+        form.pi_provider_api = env.PI_PROVIDER_API || 'openai';
+        form.pi_context_window = env.PI_MODEL_CONTEXT_WINDOW || '';
+      }
+      return form;
+    },
+
+    normalizeWorkerBaseUrl(value) {
+      return String(value || '').trim().replace(/\/+$/, '');
+    },
+
+    workerFormToConfig({ quiet = false } = {}) {
+      const name = String(this.workerForm.name || '').trim();
+      const type = this.workerForm.type || 'claudecode';
+      const taskTypes = Array.isArray(this.workerForm.task_types) ? this.workerForm.task_types : [];
+      const maxRunning = Number(this.workerForm.max_running);
+      const priority = Number(this.workerForm.priority);
+      const fail = (message) => {
+        if (!quiet) this.showToast(message, 'error');
+        return null;
+      };
+      if (!name) return fail('请填写 Worker 名称');
+      if (!taskTypes.length) return fail('至少选择一种可执行任务');
+      if (!Number.isInteger(maxRunning) || maxRunning < 1) return fail('最大并发必须大于 0');
+      if (!Number.isInteger(priority) || priority < 0) return fail('优先级不能小于 0');
+
+      const env = {};
+      if (type === 'claudecode') {
+        if (!this.workerForm.model || !this.workerForm.base_url) return fail('请填写模型名和 Base URL');
+        env.ANTHROPIC_MODEL = String(this.workerForm.model).trim();
+        env.ANTHROPIC_BASE_URL = this.normalizeWorkerBaseUrl(this.workerForm.base_url);
+        env.ANTHROPIC_AUTH_TOKEN = String(this.workerForm.api_key || '');
+      } else if (type === 'codex') {
+        if (!this.workerForm.model || !this.workerForm.base_url) return fail('请填写模型名和 Base URL');
+        env.CODEX_MODEL = String(this.workerForm.model).trim();
+        env.CODEX_BASE_URL = this.normalizeWorkerBaseUrl(this.workerForm.base_url);
+        env.OPENAI_API_KEY = String(this.workerForm.api_key || '');
+      } else if (type === 'pi') {
+        if (!this.workerForm.model || !this.workerForm.base_url || !this.workerForm.pi_provider_api) return fail('请填写 Pi 模型、Base URL 和 Provider API');
+        env.PI_MODEL = String(this.workerForm.model).trim();
+        env.PI_BASE_URL = this.normalizeWorkerBaseUrl(this.workerForm.base_url);
+        env.PI_API_KEY = String(this.workerForm.api_key || '');
+        env.PI_PROVIDER_API = String(this.workerForm.pi_provider_api).trim();
+        if (String(this.workerForm.pi_context_window || '').trim()) {
+          env.PI_MODEL_CONTEXT_WINDOW = String(this.workerForm.pi_context_window).trim();
+        }
+      }
+
+      return {
+        name,
+        type,
+        task_types: [...taskTypes],
+        max_running: maxRunning,
+        priority,
+        env,
+      };
+    },
+
+    async openWorkerConfigModal(name = '') {
+      if (!this.workerConfigs.length && !this.workerConfigLoading) {
+        await this.loadWorkerConfig();
+      }
+      const config = name ? this.workerConfigByName(name) : null;
+      if (name && !config) {
+        this.showToast('没有找到该 Worker 的配置', 'error');
+        return;
+      }
+      this.workerFormMode = config ? 'edit' : 'create';
+      this.workerFormOriginalName = config ? config.name : '';
+      this.workerForm = config ? this.workerConfigToForm(config) : this.workerDefaultForm();
+      this.workerConfigTestResult = null;
+      this.showWorkerConfigModal = true;
+    },
+
+    closeWorkerConfigModal() {
+      if (this.workerConfigSaving || this.workerConfigTesting === '__draft__') return;
+      this.showWorkerConfigModal = false;
+      this.workerConfigTestResult = null;
+      this.workerFormOriginalName = '';
+    },
+
+    async saveWorkerConfig() {
+      const config = this.workerFormToConfig();
+      if (!config) return;
+      const duplicate = this.workerConfigs.find(worker =>
+        worker.name === config.name && worker.name !== this.workerFormOriginalName
+      );
+      if (duplicate) {
+        this.showToast('Worker 名称不能重复', 'error');
+        return;
+      }
+      const next = [...this.workerConfigs];
+      const index = next.findIndex(worker => worker.name === this.workerFormOriginalName);
+      if (index >= 0) next.splice(index, 1, config);
+      else next.push(config);
+
+      this.workerConfigSaving = true;
+      try {
+        const payload = await this.api('PUT', '/api/workers/config', { workers: next });
+        this.workerConfigs = Array.isArray(payload.workers) ? payload.workers : next;
+        this.showWorkerConfigModal = false;
+        this.workerConfigTestResult = null;
+        await this.loadWorkers();
+        this.showToast('Worker 配置已保存');
+      } catch (e) {
+        this.showToast(e.message || '保存 Worker 配置失败', 'error');
+      } finally {
+        this.workerConfigSaving = false;
+      }
+    },
+
+    async deleteWorkerConfig() {
+      if (this.workerFormMode !== 'edit') return;
+      if (this.workerConfigs.length <= 1) {
+        this.showToast('至少需要保留一个 Worker', 'error');
+        return;
+      }
+      if (!confirm(`确认删除 Worker：${this.workerFormOriginalName}？`)) return;
+      const next = this.workerConfigs.filter(worker => worker.name !== this.workerFormOriginalName);
+      this.workerConfigSaving = true;
+      try {
+        const payload = await this.api('PUT', '/api/workers/config', { workers: next });
+        this.workerConfigs = Array.isArray(payload.workers) ? payload.workers : next;
+        this.showWorkerConfigModal = false;
+        await this.loadWorkers();
+        this.showToast('Worker 已删除');
+      } catch (e) {
+        this.showToast(e.message || '删除 Worker 失败', 'error');
+      } finally {
+        this.workerConfigSaving = false;
+      }
+    },
+
+    async testWorkerForm() {
+      const config = this.workerFormToConfig();
+      if (!config) return;
+      this.workerConfigTesting = '__draft__';
+      this.workerConfigTestResult = null;
+      try {
+        this.workerConfigTestResult = await this.api('POST', '/api/workers/config/test', { worker: config });
+      } catch (e) {
+        this.workerConfigTestResult = { ok: false, preview: e.message || '连通性测试失败', duration_ms: 0 };
+      } finally {
+        this.workerConfigTesting = false;
+      }
+    },
+
+    async testSavedWorker(name) {
+      if (!this.workerConfigs.length && !this.workerConfigLoading) {
+        await this.loadWorkerConfig();
+      }
+      const config = this.workerConfigByName(name);
+      if (!config) {
+        this.showToast('没有找到该 Worker 的配置', 'error');
+        return;
+      }
+      this.workerConfigTesting = name;
+      try {
+        const result = await this.api('POST', '/api/workers/config/test', { worker: config });
+        this.showToast(result.ok ? `${name} 连通性正常` : `${name} 连通性失败`, result.ok ? 'info' : 'error');
+      } catch (e) {
+        this.showToast(e.message || '连通性测试失败', 'error');
+      } finally {
+        this.workerConfigTesting = false;
+      }
+    },
+
+    workerConfigTestPreview() {
+      const result = this.workerConfigTestResult;
+      if (!result) return '';
+      return result.preview || result.response_preview || result.stderr_preview || '命令已执行，未返回额外内容。';
     },
 
     // Compare the incoming statuses against the previous snapshot and flag any
@@ -3833,6 +4312,7 @@ function cairnApp() {
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
         if (typeof data.detail === 'string') msg = data.detail;
+        else if (data.detail && typeof data.detail.message === 'string') msg = data.detail.message;
         else if (Array.isArray(data.detail)) msg = data.detail.map(e => e.msg).join('; ');
         throw new Error(msg);
       }

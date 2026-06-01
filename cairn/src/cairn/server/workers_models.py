@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 # The current-task description shown for a busy worker is truncated to this many
 # characters so the dashboard card stays compact (requirement 10, design.md).
@@ -68,3 +68,52 @@ class WorkerTaskHistoryEntry(BaseModel):
     started_at: str
     duration_seconds: float | None = None
     outcome: Literal["success", "failed", "rejected", "released"]
+
+
+TaskType = Literal["reason", "explore", "bootstrap"]
+WorkerType = Literal["claudecode", "codex", "pi", "mock"]
+
+
+class WorkerConfigItem(BaseModel):
+    """Editable dispatcher worker configuration shown in the dashboard."""
+
+    name: str = Field(min_length=1)
+    type: WorkerType
+    task_types: list[TaskType]
+    max_running: int = Field(gt=0)
+    priority: int = Field(ge=0)
+    env: dict[str, str] = Field(default_factory=dict)
+    secret_env_keys: list[str] = Field(default_factory=list)
+
+    @field_validator("task_types")
+    @classmethod
+    def validate_task_types(cls, value: list[TaskType]) -> list[TaskType]:
+        if not value:
+            raise ValueError("task_types must not be empty")
+        if len(set(value)) != len(value):
+            raise ValueError("task_types must be unique")
+        return value
+
+
+class WorkerConfigResponse(BaseModel):
+    workers: list[WorkerConfigItem]
+
+
+class WorkerConfigUpdate(BaseModel):
+    workers: list[WorkerConfigItem]
+
+
+class WorkerConnectionTestRequest(BaseModel):
+    worker: WorkerConfigItem
+
+
+class WorkerConnectionTestResult(BaseModel):
+    worker_name: str
+    ok: bool
+    returncode: int
+    duration_ms: int
+    http_status: str | None = None
+    response_preview: str = ""
+    stderr_preview: str = ""
+    preview: str = ""
+    command: str = ""

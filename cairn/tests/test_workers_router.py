@@ -88,6 +88,17 @@ def _patch_proxy(monkeypatch, *, response=None, exc: Exception | None = None) ->
     monkeypatch.setattr(workers.requests, "get", fake_get)
 
 
+def _patch_internal_request(monkeypatch, *, response=None, exc: Exception | None = None) -> None:
+    """Monkeypatch ``requests.request`` for worker config proxy endpoints."""
+
+    def fake_request(method, url, json=None, timeout=None):  # noqa: ARG001
+        if exc is not None:
+            raise exc
+        return response
+
+    monkeypatch.setattr(workers.requests, "request", fake_request)
+
+
 # A long description used to verify current-task truncation (req 9.4).
 LONG_TASK = "explore-target " * 20  # 300 chars, well over the 120 limit
 
@@ -269,6 +280,98 @@ def test_dispatcher_non_json_body_returns_503(client, monkeypatch):
 
     resp = client.get("/api/workers")
     assert resp.status_code == 503
+
+
+def test_worker_config_proxy_returns_masked_config(client, monkeypatch):
+    _patch_internal_request(
+        monkeypatch,
+        response=_FakeResponse(
+            {
+                "workers": [
+                    {
+                        "name": "mock-1",
+                        "type": "mock",
+                        "task_types": ["bootstrap"],
+                        "max_running": 1,
+                        "priority": 0,
+                        "env": {},
+                        "secret_env_keys": [],
+                    }
+                ]
+            }
+        ),
+    )
+
+    resp = client.get("/api/workers/config")
+    assert resp.status_code == 200
+    assert resp.json()["workers"][0]["name"] == "mock-1"
+
+
+def test_worker_config_update_proxies_payload(client, monkeypatch):
+    seen = {}
+
+    def fake_request(method, url, json=None, timeout=None):  # noqa: ARG001
+        seen["method"] = method
+        seen["json"] = json
+        return _FakeResponse(json)
+
+    monkeypatch.setattr(workers.requests, "request", fake_request)
+
+    payload = {
+        "workers": [
+            {
+                "name": "mock-1",
+                "type": "mock",
+                "task_types": ["bootstrap"],
+                "max_running": 1,
+                "priority": 0,
+                "env": {},
+                "secret_env_keys": [],
+            }
+        ]
+    }
+    resp = client.put("/api/workers/config", json=payload)
+
+    assert resp.status_code == 200
+    assert seen["method"] == "PUT"
+    assert seen["json"]["workers"][0]["name"] == "mock-1"
+
+
+def test_worker_config_test_proxy_returns_result(client, monkeypatch):
+    _patch_internal_request(
+        monkeypatch,
+        response=_FakeResponse(
+            {
+                "worker_name": "mock-1",
+                "ok": True,
+                "returncode": 0,
+                "duration_ms": 12,
+                "http_status": None,
+                "response_preview": "pong",
+                "stderr_preview": "",
+                "preview": "pong",
+                "command": "python3 -c ...",
+            }
+        ),
+    )
+
+    resp = client.post(
+        "/api/workers/config/test",
+        json={
+            "worker": {
+                "name": "mock-1",
+                "type": "mock",
+                "task_types": ["bootstrap"],
+                "max_running": 1,
+                "priority": 0,
+                "env": {},
+                "secret_env_keys": [],
+            }
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
 
 
 # ---------------------------------------------------------------------------

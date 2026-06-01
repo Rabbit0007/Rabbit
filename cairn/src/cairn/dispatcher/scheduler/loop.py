@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -58,12 +59,31 @@ class DispatcherLoop:
         self.project_cursor = 0
         self._settings_checked = False
         self._startup_healthchecks_checked = False
+        self._config_lock = threading.RLock()
         # Optional, default-off task-history ring buffer for the read-only
         # internal status API. When ``None`` (the default), no history is
         # recorded and the scheduler behaves exactly as before. It is only
         # enabled via ``enable_internal_state_tracking`` when the opt-in
         # internal API is started.
         self.task_history: deque[dict[str, Any]] | None = None
+
+    def apply_config(self, config: DispatchConfig) -> None:
+        """Apply a validated dispatcher config for future scheduling decisions.
+
+        Existing tasks keep running with the worker/env snapshot they were
+        started with. New scheduling decisions read ``self.config.workers``, so
+        replacing the config object is enough to pick up added/edited workers
+        without touching active futures or the task execution path.
+        """
+        with self._config_lock:
+            worker_names = {worker.name for worker in config.workers}
+            self.config = config
+            for worker_name in list(self.worker_unhealthy_until):
+                if worker_name not in worker_names:
+                    self.worker_unhealthy_until.pop(worker_name, None)
+            for key in list(self.worker_rejected_until):
+                if key[2] not in worker_names:
+                    self.worker_rejected_until.pop(key, None)
 
     def enable_internal_state_tracking(self, history_size: int = 200) -> None:
         """Enable the optional read-only task-history buffer.
@@ -164,7 +184,7 @@ class DispatcherLoop:
         self._startup_healthchecks_checked = True
 
     def _maybe_start_internal_api(self) -> None:
-        """Optionally start the read-only internal status API.
+        """Optionally start the internal API.
 
         Opt-in via the ``CAIRN_DISPATCHER_INTERNAL_API`` env var and fully
         non-fatal: any failure is swallowed so the scheduler keeps running.
@@ -536,7 +556,9 @@ class DispatcherLoop:
         blocked_rejected: list[str] = []
         blocked_task_type: list[str] = []
         running_counts = self._worker_counts()
-        for worker in self.config.workers:
+        with self._config_lock:
+            workers = list(self.config.workers)
+        for worker in workers:
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
                 continue
