@@ -3,3 +3,5 @@
 __pycache__/
 .playwright-cli/
 datas/
+cairn/frontend/node_modules/
+cairn/frontend/dist/
