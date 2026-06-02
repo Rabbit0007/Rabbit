@@ -100,6 +100,35 @@ CREATE TABLE IF NOT EXISTS export_records (
 
 CREATE INDEX IF NOT EXISTS idx_export_records_time
     ON export_records(created_at);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'system',
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    summary TEXT NOT NULL,
+    detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_time
+    ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    level TEXT NOT NULL DEFAULT 'info',
+    title TEXT NOT NULL,
+    body TEXT,
+    link TEXT,
+    read INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_time
+    ON notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_read
+    ON notifications(read);
 """
 
 VULNERABILITY_COLUMNS: dict[str, str] = {

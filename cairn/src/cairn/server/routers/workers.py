@@ -389,6 +389,13 @@ def update_worker_config(config: WorkerConfigUpdate) -> WorkerConfigResponse:
         unavailable_message="Worker config update failed",
         timeout=_test_timeout(),
     )
+    try:
+        from cairn.server.activity_service import record_audit
+
+        worker_count = len(config.workers) if getattr(config, "workers", None) is not None else 0
+        record_audit("worker.config", f"更新工作节点配置（{worker_count} 个节点）", target_type="worker")
+    except Exception:
+        pass
     return WorkerConfigResponse.model_validate(payload)
 
 

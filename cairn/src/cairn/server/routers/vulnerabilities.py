@@ -26,6 +26,7 @@ from fastapi.responses import Response
 
 from datetime import datetime, timezone
 
+from cairn.server.activity_service import record_audit
 from cairn.server.db import get_conn
 from cairn.server.vulnerabilities_models import (
     ExportRecord,
@@ -749,6 +750,13 @@ def update_vulnerability_status(
             [payload.status, target.project_id, *fact_ids],
         )
 
+    status_label = "已忽略" if payload.status == "ignored" else "已确认"
+    record_audit(
+        "vulnerability.status",
+        f"漏洞「{target.title}」标记为{status_label}",
+        target_type="vulnerability",
+        target_id=vulnerability_id,
+    )
     return target.model_copy(update={"status": payload.status})
 
 
@@ -1176,6 +1184,12 @@ def _record_export(
             )
     except Exception:  # pragma: no cover - logging must not break the download
         pass
+    record_audit(
+        "vulnerability.export",
+        f"导出漏洞报告（{fmt.upper()}）· {scope}",
+        target_type="export",
+        target_id=filename,
+    )
 
 
 @router.get("/export-records", response_model=list[ExportRecord])
@@ -1193,6 +1207,22 @@ def list_export_records(limit: int = Query(default=50, ge=1, le=200)) -> list[Ex
             (limit,),
         ).fetchall()
     return [ExportRecord(**dict(row)) for row in rows]
+
+
+@router.delete("/export-records/{record_id}")
+def delete_export_record(record_id: int) -> dict[str, str]:
+    """Delete a single export record from history."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM export_records WHERE id = ?", (record_id,))
+    return {"status": "deleted"}
+
+
+@router.delete("/export-records")
+def clear_export_records() -> dict[str, str]:
+    """Clear all export records."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM export_records")
+    return {"status": "cleared"}
 
 
 @router.get("/export")

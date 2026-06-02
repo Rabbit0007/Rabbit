@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from cairn.server.activity_service import record_audit, record_notification
 from cairn.server.db import get_conn
 from cairn.server.models import (
     CompleteRequest,
@@ -103,6 +104,8 @@ def create_project(body: CreateProjectRequest):
                 )
                 hints.append(Hint(id=hid, content=h.content, creator=h.creator, created_at=now))
 
+        record_audit("project.create", f"创建项目 {body.title}", target_type="project", target_id=pid)
+        record_notification(f"新建项目：{body.title}", level="info", link="#/projects")
         return ProjectDetail(
             project=ProjectMeta(id=pid, title=body.title, status="active", created_at=now, reason=None),
             facts=[
@@ -140,8 +143,11 @@ def get_project(project_id: str):
 @router.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: str):
     with get_conn() as conn:
-        get_project_or_404(conn, project_id)
+        row = get_project_or_404(conn, project_id)
+        title = row["title"]
         conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    record_audit("project.delete", f"删除项目 {title}", target_type="project", target_id=project_id)
+    record_notification(f"项目已删除：{title}", level="warning")
 
 
 @router.put("/projects/{project_id}/title", response_model=ProjectMeta)
@@ -153,7 +159,9 @@ def update_project_title(project_id: str, body: UpdateProjectTitleRequest):
             (body.title, project_id),
         )
         updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-        return project_meta_from_row(updated)
+        meta = project_meta_from_row(updated)
+    record_audit("project.rename", f"项目重命名为 {body.title}", target_type="project", target_id=project_id)
+    return meta
 
 
 @router.put("/projects/{project_id}/status", response_model=ProjectMeta)
@@ -178,7 +186,10 @@ def update_project_status(project_id: str, body: UpdateProjectStatusRequest):
             )
             clear_project_reason(conn, project_id)
         updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-        return project_meta_from_row(updated)
+        meta = project_meta_from_row(updated)
+    status_label = {"active": "运行中", "stopped": "已停止", "completed": "已完成"}.get(body.status, body.status)
+    record_audit("project.status", f"项目 {row['title']} 状态变更为 {status_label}", target_type="project", target_id=project_id)
+    return meta
 
 
 @router.post("/projects/{project_id}/reason/claim", response_model=ProjectMeta)

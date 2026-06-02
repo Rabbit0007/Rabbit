@@ -10,6 +10,7 @@ from cairn.server import auth_db, db, product_db
 from cairn.server.middleware.auth import require_auth
 from cairn.server.routers import (
     auth,
+    activity,
     export,
     hints,
     intents,
@@ -62,6 +63,7 @@ app.include_router(vulnerabilities.router, dependencies=_protected)
 app.include_router(workers.router, dependencies=_protected)
 app.include_router(templates.router, dependencies=_protected)
 app.include_router(timeline.router, dependencies=_protected)
+app.include_router(activity.router, dependencies=_protected)
 
 
 @app.get("/", include_in_schema=False)
