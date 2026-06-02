@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
     evidence_json TEXT NOT NULL DEFAULT '[]',
     process_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('confirmed', 'ignored')),
     UNIQUE(project_id, fact_id)
 );
 
@@ -83,6 +84,22 @@ CREATE TABLE IF NOT EXISTS templates (
 
 CREATE INDEX IF NOT EXISTS idx_templates_user
     ON templates(user_id);
+
+CREATE TABLE IF NOT EXISTS export_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    format TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    vulnerability_count INTEGER NOT NULL DEFAULT 0,
+    project_id TEXT,
+    project_name TEXT,
+    severity TEXT,
+    status TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_export_records_time
+    ON export_records(created_at);
 """
 
 VULNERABILITY_COLUMNS: dict[str, str] = {
@@ -92,6 +109,7 @@ VULNERABILITY_COLUMNS: dict[str, str] = {
     "source_fact_ids_json": "TEXT NOT NULL DEFAULT '[]'",
     "evidence_json": "TEXT NOT NULL DEFAULT '[]'",
     "process_json": "TEXT NOT NULL DEFAULT '[]'",
+    "status": "TEXT NOT NULL DEFAULT 'confirmed'",
 }
 
 

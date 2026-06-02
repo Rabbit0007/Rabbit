@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  Bell,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -14,6 +15,7 @@ import {
   Eye,
   FileText,
   Folder,
+  Home,
   KeyRound,
   Loader2,
   Lock,
@@ -25,6 +27,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Settings,
   ShieldAlert,
   Sparkles,
@@ -42,7 +45,6 @@ import {
   cn,
   formatTime,
   go,
-  groupBy,
   parseHash,
   parseHintLines,
   relativeHeartbeat,
@@ -154,7 +156,7 @@ export default function App() {
         {route.page === "project" ? (
           <ProjectWorkspace projectId={route.projectId} runAction={runAction} setToast={setToast} />
         ) : route.page === "vulnerabilities" ? (
-          <VulnerabilitiesPage runAction={runAction} setToast={setToast} />
+          <VulnerabilitiesPage route={route} runAction={runAction} setToast={setToast} />
         ) : route.page === "workers" ? (
           <WorkersPage runAction={runAction} setToast={setToast} />
         ) : route.page === "templates" ? (
@@ -171,60 +173,123 @@ export default function App() {
 }
 
 function TopNav({ route, user, onLogout, onPassword, onSettings }) {
-  const nav = [
-    ["projects", "项目"],
-    ["vulnerabilities", "漏洞报告"],
-    ["workers", "工作节点"],
-    ["templates", "模板"],
+  const mainNav = [
+    ["projects", "项目", Folder],
+    ["vulnerabilities", "漏洞报告", AlertTriangle],
+    ["workers", "工作节点", Monitor],
+    ["templates", "模板", FileText],
   ];
-
+  const activeNav = mainNav.find(([key]) => route.page === key || (key === "projects" && route.page === "project"));
+  const reportSubnav = [
+    ["overview", "报告总览"],
+    ["critical", "严重漏洞"],
+    ["high", "高危漏洞"],
+    ["medium", "中危漏洞"],
+    ["low", "低危漏洞"],
+    ["confirmed", "已确认漏洞"],
+    ["ignored", "已忽略漏洞"],
+    ["export-records", "导出记录"],
+  ];
+  const activeView = route.page === "vulnerabilities" ? route.view || "overview" : null;
   return (
-    <header className="top-nav">
-      <button className="brand" type="button" onClick={() => go("#/projects")}>
-        <span className="brand-mark">
-          <img src="/static/rabbit-icon.png" alt="Rabbit" />
-        </span>
-        <span>{APP_NAME}</span>
-      </button>
-      <nav className="nav-tabs" aria-label="主导航">
-        {nav.map(([key, label]) => {
-          const active = route.page === key || (key === "projects" && route.page === "project");
-          return (
-            <button
-              key={key}
-              className={cn("nav-tab", active && "active")}
-              type="button"
-              onClick={() => go(key === "projects" ? "#/projects" : `#/${key}`)}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </nav>
-      <div className="nav-actions">
-        <span className="user-chip">
-          <User size={17} />
-          {user.username}
-        </span>
-        <button className="ghost-button" type="button" onClick={onPassword}>
-          <KeyRound size={17} />
-          修改密码
+    <>
+      <header className="top-utility">
+        <button className="brand" type="button" onClick={() => go("#/projects")}>
+          <span className="brand-mark">
+            <img src="/static/rabbit-icon.png" alt="Rabbit" />
+          </span>
+          <span>{APP_NAME}</span>
         </button>
-        <button className="ghost-button" type="button" onClick={onSettings}>
-          <Settings size={17} />
+        <div className="top-section-label">{activeNav?.[1] || APP_NAME}</div>
+        <label className="global-search">
+          <Search size={15} />
+          <input placeholder="搜索漏洞标题、编号、项目、标签..." aria-label="全局搜索" />
+        </label>
+        <div className="nav-actions">
+          <button className="icon-button" type="button" aria-label="帮助" title="帮助">
+            <span>?</span>
+          </button>
+          <button className="icon-button" type="button" aria-label="通知">
+            <Bell size={17} />
+            <span className="notification-dot">12</span>
+          </button>
+          <button className="icon-button" type="button" onClick={onSettings} aria-label="设置" title="设置">
+            <Settings size={17} />
+          </button>
+          <span className="user-chip">
+            <User size={17} />
+            {user.username}
+            <ChevronDown size={14} />
+          </span>
+          <button className="icon-button" type="button" onClick={onPassword} aria-label="修改密码" title="修改密码">
+            <KeyRound size={16} />
+          </button>
+          <button className="icon-button" type="button" onClick={onLogout} aria-label="退出登录" title="退出登录">
+            <LogOut size={16} />
+          </button>
+        </div>
+      </header>
+      <aside className="top-nav">
+        <nav className="nav-tabs" aria-label="主导航">
+          <button className="nav-tab" type="button" onClick={() => go("#/projects")}>
+            <Home size={17} />
+            首页
+          </button>
+          {mainNav.map(([key, label, Icon]) => {
+            const active = route.page === key || (key === "projects" && route.page === "project");
+            return (
+              <div key={key} className={cn("nav-group", active && "active")}>
+                <button
+                  className={cn("nav-tab", active && "active")}
+                  type="button"
+                  onClick={() => go(key === "projects" ? "#/projects" : `#/${key}`)}
+                >
+                  <Icon size={17} />
+                  {label}
+                  {key === "vulnerabilities" && <ChevronDown className="nav-caret" size={14} />}
+                </button>
+                {key === "vulnerabilities" && active && (
+                  <div className="sub-nav">
+                    {reportSubnav.map(([view, label]) => (
+                      <button
+                        key={view}
+                        className={cn(activeView === view && "active")}
+                        type="button"
+                        onClick={() => go(view === "overview" ? "#/vulnerabilities" : `#/vulnerabilities/${view}`)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <button className="nav-tab" type="button" onClick={onSettings}>
+            <Settings size={17} />
+            系统设置
+            <ChevronDown className="nav-caret" size={14} />
+          </button>
+        </nav>
+        <div className="sidebar-workspace">
+          <FileText size={18} />
+          <div>
+            <span>当前工作区</span>
+            <strong>默认工作区</strong>
+          </div>
+          <ChevronRight size={16} />
+        </div>
+        <button className="collapse-sidebar" type="button" aria-label="折叠菜单">
+          <ChevronDown size={17} />
         </button>
-        <button className="ghost-button" type="button" onClick={onLogout}>
-          <LogOut size={17} />
-          退出登录
-        </button>
-      </div>
-    </header>
+      </aside>
+    </>
   );
 }
 
 function AuthPage({ onAuthed, setToast }) {
   const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ username: "", password: "", captcha_answer: "" });
+  const [form, setForm] = useState({ username: "", password: "", confirm_password: "", captcha_answer: "" });
   const [captcha, setCaptcha] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -240,6 +305,10 @@ function AuthPage({ onAuthed, setToast }) {
 
   const submit = async (event) => {
     event.preventDefault();
+    if (mode === "register" && form.password !== form.confirm_password) {
+      setToast({ type: "warning", message: "两次输入的密码不一致" });
+      return;
+    }
     setLoading(true);
     try {
       await apiRequest(`/api/auth/${mode === "login" ? "login" : "register"}`, {
@@ -262,81 +331,145 @@ function AuthPage({ onAuthed, setToast }) {
 
   return (
     <div className="auth-shell">
-      <div className="auth-art" aria-hidden="true">
-        <span className="map-node node-a" />
-        <span className="map-node node-b" />
-        <span className="map-node node-c" />
-        <span className="map-node node-d" />
-        <span className="map-line line-a" />
-        <span className="map-line line-b" />
-        <span className="map-line line-c" />
-      </div>
-      <section className="auth-card">
-        <div className="auth-title">
-          <span className="auth-logo">
-            <img src="/static/rabbit-icon.png" alt="Rabbit" />
-          </span>
-          <h1>{APP_NAME}</h1>
-          <p>登录以继续安全探索工作流</p>
-        </div>
-        <div className="segmented">
-          <button className={cn(mode === "login" && "active")} type="button" onClick={() => setMode("login")}>
-            登录
-          </button>
-          <button className={cn(mode === "register" && "active")} type="button" onClick={() => setMode("register")}>
-            注册
-          </button>
-        </div>
-        <form className="stack-form" onSubmit={submit}>
-          <label>
-            <span>用户名</span>
-            <input
-              autoComplete="username"
-              value={form.username}
-              onChange={(event) => setForm({ ...form, username: event.target.value })}
-              placeholder="admin"
-            />
-          </label>
-          <label>
-            <span>密码</span>
-            <input
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              type="password"
-              value={form.password}
-              onChange={(event) => setForm({ ...form, password: event.target.value })}
-              placeholder="输入密码"
-            />
-          </label>
-          <label>
-            <span>验证码</span>
-            <div className="captcha-row">
-              <input
-                value={form.captcha_answer}
-                onChange={(event) => setForm({ ...form, captcha_answer: event.target.value })}
-                placeholder="计算结果"
-              />
-              <button className="captcha-chip" type="button" onClick={loadCaptcha}>
-                {captcha?.question || "刷新"}
+      <section className="auth-card auth-split-card">
+        <aside className="auth-showcase" aria-hidden="true">
+          <div className="auth-brand">
+            <span className="auth-brand-logo">
+              <img src="/static/rabbit-icon.png" alt="" />
+            </span>
+            <strong>{APP_NAME}</strong>
+          </div>
+          <div className="auth-hero-visual">
+            <span className="cube cube-a" />
+            <span className="cube cube-b" />
+            <span className="cube cube-c" />
+            <span className="orbit-line orbit-a" />
+            <span className="orbit-line orbit-b" />
+            <img src="/static/rabbit-icon.png" alt="" />
+            <span className="shield-badge">
+              <CheckCircle2 size={34} />
+            </span>
+          </div>
+          <div className="auth-copy">
+            <h2>
+              持续安全探索
+              <br />
+              让攻击<span>无处遁形</span>
+            </h2>
+            <p>Rabbit 帮助安全团队自动化资产发现、漏洞验证和攻击面管理，让安全探索更清晰。</p>
+          </div>
+          <div className="auth-capabilities">
+            <span>
+              <ShieldAlert size={16} />
+              资产发现
+            </span>
+            <span>
+              <CheckCircle2 size={16} />
+              漏洞验证
+            </span>
+            <span>
+              <Network size={16} />
+              攻击面管理
+            </span>
+          </div>
+        </aside>
+
+        <main className="auth-form-panel">
+          {mode === "register" && (
+            <button className="auth-back" type="button" onClick={() => setMode("login")}>
+              <ArrowLeft size={16} />
+              返回登录
+            </button>
+          )}
+          <div className="auth-title align-left">
+            <h1>{mode === "login" ? "欢迎回来" : "创建账户"} <span>👋</span></h1>
+            <p>{mode === "login" ? "登录以继续安全探索工作流" : "加入 Rabbit 安全探索平台"}</p>
+          </div>
+          {mode === "login" && (
+            <div className="segmented auth-login-tabs">
+              <button className="active" type="button">
+                账号登录
+              </button>
+              <button
+                type="button"
+                onClick={() => setToast({ type: "info", message: "手机号验证码登录暂未接入，先使用账号登录。" })}
+              >
+                手机号登录
               </button>
             </div>
-          </label>
-          <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? <Loader2 className="spin" size={18} /> : <Lock size={18} />}
-            {mode === "login" ? "登录" : "创建账号"}
-          </button>
-        </form>
+          )}
+          <form className="stack-form auth-stack-form" onSubmit={submit}>
+            <label>
+              <span>用户名</span>
+              <input
+                autoComplete="username"
+                value={form.username}
+                onChange={(event) => setForm({ ...form, username: event.target.value })}
+                placeholder="请输入用户名"
+              />
+            </label>
+            <label>
+              <span>密码</span>
+              <input
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                type="password"
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                placeholder={mode === "login" ? "请输入密码" : "请设置密码"}
+              />
+            </label>
+            {mode === "register" && (
+              <label>
+                <span>确认密码</span>
+                <input
+                  autoComplete="new-password"
+                  type="password"
+                  value={form.confirm_password}
+                  onChange={(event) => setForm({ ...form, confirm_password: event.target.value })}
+                  placeholder="请再次输入密码"
+                />
+              </label>
+            )}
+            <label>
+              <span>验证码</span>
+              <div className="captcha-row">
+                <input
+                  value={form.captcha_answer}
+                  onChange={(event) => setForm({ ...form, captcha_answer: event.target.value })}
+                  placeholder="请输入计算结果"
+                />
+                <button className="captcha-chip" type="button" onClick={loadCaptcha}>
+                  {captcha?.question || "刷新"}
+                  <RefreshCw size={15} />
+                </button>
+              </div>
+            </label>
+            <button className="primary-button auth-submit" type="submit" disabled={loading}>
+              {loading ? <Loader2 className="spin" size={18} /> : <Lock size={18} />}
+              {mode === "login" ? "登录" : "注册账号"}
+            </button>
+          </form>
+          <p className="auth-switch">
+            {mode === "login" ? "还没有账号？" : "已有账号？"}
+            <button type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+              {mode === "login" ? "立即注册" : "返回登录"}
+            </button>
+          </p>
+        </main>
       </section>
     </div>
   );
 }
 
-function PageHeader({ icon: Icon, title, subtitle, actions }) {
+function PageHeader({ icon: Icon, title, subtitle, actions, compact = false }) {
   return (
-    <section className="page-header">
+    <section className={cn("page-header", compact && "compact-report-header")}>
       <div className="page-title">
-        <span className="page-icon">
-          <Icon size={28} />
-        </span>
+        {Icon && (
+          <span className="page-icon">
+            <Icon size={28} />
+          </span>
+        )}
         <div>
           <h1>{title}</h1>
           <p>{subtitle}</p>
@@ -956,14 +1089,18 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   const cyRef = useRef(null);
 
   const elements = useMemo(() => {
+    const compactLabel = (value, length = 72) => clampText(String(value || ""), length);
     const nodes = detail.facts.map((fact) => ({
-      data: { id: fact.id, label: fact.id === "origin" ? "起点" : fact.id === "goal" ? "目标" : `${fact.id}: ${fact.description}` },
+      data: {
+        id: fact.id,
+        label: fact.id === "origin" ? "起点" : fact.id === "goal" ? "目标" : `${fact.id}: ${compactLabel(fact.description)}`,
+      },
       classes: cn("fact-node", fact.id),
     }));
     const intentNodes = detail.intents.map((intent) => ({
       data: {
         id: intent.id,
-        label: `${intent.id}: ${intent.description}`,
+        label: `${intent.id}: ${compactLabel(intent.description)}`,
       },
       classes: cn("intent-node", intent.to ? "done" : intent.worker ? "claimed" : "open"),
     }));
@@ -991,7 +1128,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       container: containerRef.current,
       elements,
       wheelSensitivity: 0.18,
-      minZoom: 0.2,
+      minZoom: 0.35,
       maxZoom: 2.2,
       style: [
         {
@@ -999,19 +1136,20 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           style: {
             label: "data(label)",
             "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-            "font-size": 12,
-            "font-weight": 700,
+            "font-size": 15,
+            "font-weight": 620,
             color: "#fff",
             "text-wrap": "wrap",
-            "text-max-width": 150,
+            "text-max-width": 190,
             "text-valign": "center",
             "text-halign": "center",
-            width: 150,
-            height: 58,
+            width: 196,
+            height: 72,
             shape: "round-rectangle",
             "background-color": "#007aff",
+            "background-opacity": 0.96,
             "border-width": 0,
-            "shadow-blur": 18,
+            "shadow-blur": 16,
             "shadow-color": "rgba(0, 122, 255, .22)",
             "shadow-opacity": 1,
           },
@@ -1026,19 +1164,19 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           selector: ".origin",
           style: {
             width: 220,
-            height: 118,
+            height: 104,
             "background-color": "#34c759",
-            "font-size": 24,
+            "font-size": 26,
           },
         },
         {
           selector: ".goal",
           style: {
             width: 220,
-            height: 118,
+            height: 104,
             "background-color": "#ff6b6b",
-            opacity: 0.75,
-            "font-size": 24,
+            opacity: 0.88,
+            "font-size": 26,
           },
         },
         {
@@ -1068,11 +1206,11 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             "line-color": "#7ee0c5",
             "target-arrow-color": "#7ee0c5",
             label: "data(label)",
-            "font-size": 10,
-            color: "#6b7280",
+            "font-size": 12,
+            color: "#334155",
             "text-background-color": "#fff",
-            "text-background-opacity": 0.75,
-            "text-background-padding": 2,
+            "text-background-opacity": 0.9,
+            "text-background-padding": 4,
           },
         },
         {
@@ -1113,9 +1251,17 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     if (!cy) return;
     const options =
       layout === "dagre"
-        ? { name: "dagre", rankDir: "TB", nodeSep: 55, rankSep: 90, fit: true, padding: 90 }
-        : { name: layout, fit: true, padding: 90 };
+        ? { name: "dagre", rankDir: "TB", nodeSep: 75, rankSep: 125, fit: true, padding: 44 }
+        : { name: layout, fit: true, padding: 54 };
     cy.layout(options).run();
+    window.setTimeout(() => {
+      if (!cyRef.current) return;
+      const currentZoom = cyRef.current.zoom();
+      if (currentZoom < 0.72) {
+        cyRef.current.zoom({ level: 0.72, renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 } });
+        cyRef.current.center();
+      }
+    }, 80);
   }, [layout, elements]);
 
   useEffect(() => {
@@ -1390,42 +1536,51 @@ function TextActionModal({ title, label, onClose, onSubmit }) {
   );
 }
 
-function VulnerabilitiesPage({ runAction, setToast }) {
+function VulnerabilitiesPage({ route, runAction, setToast }) {
+  const view = route?.view || "overview";
+  const severityViews = { critical: "严重漏洞", high: "高危漏洞", medium: "中危漏洞", low: "低危漏洞" };
+  const statusViews = { confirmed: "已确认漏洞", ignored: "已忽略漏洞" };
+  const viewTitle =
+    view === "export-records"
+      ? "导出记录"
+      : severityViews[view] || statusViews[view] || "报告总览";
+
   const [vulnerabilities, setVulnerabilities] = useState([]);
-  const [summary, setSummary] = useState({ critical: 0, high: 0, medium: 0, low: 0 });
   const [projects, setProjects] = useState([]);
-  const [filters, setFilters] = useState({ severity: "", project_id: "" });
-  const [expandedProjects, setExpandedProjects] = useState({});
+  const [filters, setFilters] = useState({ severity: "", project_id: "", status: "", search: "" });
   const [expandedVulns, setExpandedVulns] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // The left sub-nav drives a severity or status filter via the URL view. The
+  // in-page filter selects (project/search) still compose on top of it.
+  const viewSeverity = severityViews[view] ? view : "";
+  const viewStatus = statusViews[view] ? view : "";
 
   const query = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.severity) params.set("severity", filters.severity);
+    const severity = viewSeverity || filters.severity;
+    const status = viewStatus || filters.status;
+    if (severity) params.set("severity", severity);
     if (filters.project_id) params.set("project_id", filters.project_id);
+    if (status) params.set("status", status);
     const suffix = params.toString();
     return suffix ? `?${suffix}` : "";
-  }, [filters]);
+  }, [filters.project_id, filters.severity, filters.status, viewSeverity, viewStatus]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
-      const [list, counts, projectList] = await Promise.all([
+      const [list, projectList] = await Promise.all([
         apiRequest(`/api/vulnerabilities${query}`),
-        apiRequest("/api/vulnerabilities/summary"),
         apiRequest("/projects"),
       ]);
       setVulnerabilities(list);
-      setSummary(counts);
       setProjects(projectList);
-      setExpandedProjects((prev) => {
-        if (Object.keys(prev).length) return prev;
-        return Object.fromEntries(list.map((item) => [item.project_id, true]));
-      });
     } catch (error) {
-      setToast({ type: "danger", message: error.message || "漏洞报告加载失败" });
+      if (!silent) setToast({ type: "danger", message: error.message || "漏洞报告加载失败" });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [query, setToast]);
 
@@ -1433,158 +1588,311 @@ function VulnerabilitiesPage({ runAction, setToast }) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      load({ silent: true });
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
   const refresh = async () => {
     await runAction("漏洞报告已刷新", () => apiRequest("/api/vulnerabilities/refresh", { method: "POST" }));
     await load();
   };
 
-  const exportMd = async ({ projectId, vulnerabilityId, title }) => {
+  const exportMd = async ({ selected = [], title = "vulnerabilities" }) => {
+    if (!selected.length) {
+      setToast({ type: "warning", message: "请先选择要导出的漏洞" });
+      return;
+    }
     const params = new URLSearchParams({ format: "md" });
-    if (filters.severity) params.set("severity", filters.severity);
-    if (projectId) params.set("project_id", projectId);
-    if (vulnerabilityId) params.set("vulnerability_id", vulnerabilityId);
-    await runAction(null, () => downloadFromApi(`/api/vulnerabilities/export?${params}`, `${title || "vulnerabilities"}.md`));
+    params.set("vulnerability_ids", selected.join(","));
+    await runAction("MD 报告已生成", () => downloadFromApi(`/api/vulnerabilities/export?${params}`, `${title}.md`));
   };
 
-  const groups = useMemo(() => {
-    return Array.from(groupBy(vulnerabilities, (item) => item.project_id).entries()).map(([projectId, items]) => ({
-      projectId,
-      projectName: items[0]?.project_name || projectId,
-      items,
-      counts: summarizeSeverity(items),
-      latest: items.map((item) => item.discovered_at).sort().at(-1),
-    }));
-  }, [vulnerabilities]);
+  const updateVulnerabilityStatus = async (vuln, status) => {
+    const label = status === "ignored" ? "漏洞已标记为忽略" : "漏洞已恢复为已确认";
+    await runAction(label, () =>
+      apiRequest(`/api/vulnerabilities/${encodeURIComponent(vuln.id)}/status`, {
+        method: "PATCH",
+        body: { status },
+      }),
+    );
+    await load();
+  };
 
-  const filteredProjectCount = groups.length;
-  const filteredVulnCount = vulnerabilities.length;
+  const visibleVulnerabilities = useMemo(() => {
+    const term = filters.search.trim().toLowerCase();
+    if (!term) return vulnerabilities;
+    return vulnerabilities.filter((item) =>
+      [item.title, item.description, item.project_name, item.project_id, item.fact_id, item.source_worker]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term)),
+    );
+  }, [filters.search, vulnerabilities]);
+
+  const filteredProjectCount = useMemo(
+    () => new Set(visibleVulnerabilities.map((item) => item.project_id)).size,
+    [visibleVulnerabilities],
+  );
+  const filteredVulnCount = visibleVulnerabilities.length;
+  const visibleSummary = useMemo(() => summarizeSeverity(visibleVulnerabilities), [visibleVulnerabilities]);
+  const statusDistribution = useMemo(() => buildStatusDistribution(visibleVulnerabilities), [visibleVulnerabilities]);
+  const visibleIds = useMemo(() => visibleVulnerabilities.map((item) => item.id), [visibleVulnerabilities]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const severityTop = useMemo(() => buildSeverityTop(visibleVulnerabilities), [visibleVulnerabilities]);
+  const trendData = useMemo(() => buildVulnerabilityTrend(visibleVulnerabilities), [visibleVulnerabilities]);
+
+  useEffect(() => {
+    setSelectedIds((prev) => prev.filter((id) => visibleIds.includes(id)));
+  }, [visibleIds]);
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  };
+
+  const toggleVisibleSelected = () => {
+    setSelectedIds(allVisibleSelected ? [] : visibleIds);
+  };
+
+  if (view === "export-records") {
+    return <ExportRecordsView setToast={setToast} />;
+  }
 
   return (
     <>
       <PageHeader
-        icon={AlertTriangle}
-        title="漏洞报告"
-        subtitle="按项目归档漏洞、证明数据包和漏洞浮现过程"
+        compact
+        title={`漏洞报告 / ${viewTitle}`}
+        subtitle="查看和管理所有漏洞报告，跟踪漏洞处理进度和状态"
         actions={
-          <>
-            <button className="ghost-button" type="button" onClick={refresh}>
-              <RefreshCw size={18} />
-              刷新
-            </button>
-          </>
+          <button
+            className="ghost-button report-export-button"
+            type="button"
+            disabled={!selectedIds.length}
+            onClick={() => exportMd({ selected: selectedIds, title: "rabbit-vulnerabilities" })}
+          >
+            <Download size={18} />
+            导出报告
+          </button>
         }
       />
-      <section className="content-wrap">
+      <section className="content-wrap vulnerability-report-page">
         <div className="metric-grid severity">
           {["critical", "high", "medium", "low"].map((level) => (
-            <MetricCard key={level} label={SEVERITY_META[level].label} value={summary[level] || 0} tone={level} />
+            <MetricCard key={level} label={`${SEVERITY_META[level].label}漏洞`} value={visibleSummary[level] || 0} tone={level} />
           ))}
+          <MetricCard label="已确认" value={statusDistribution.confirmed || 0} tone="success" />
         </div>
-        <div className="filter-panel">
-          <label>
-            <span>严重程度</span>
-            <select value={filters.severity} onChange={(event) => setFilters({ ...filters, severity: event.target.value })}>
-              <option value="">全部严重程度</option>
-              {Object.entries(SEVERITY_META).map(([key, meta]) => (
-                <option key={key} value={key}>
-                  {meta.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>项目</span>
-            <select value={filters.project_id} onChange={(event) => setFilters({ ...filters, project_id: event.target.value })}>
-              <option value="">全部项目</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.title} ({project.id})
-                </option>
-              ))}
-            </select>
-          </label>
-          {(filters.severity || filters.project_id) && (
-            <button className="ghost-button compact" type="button" onClick={() => setFilters({ severity: "", project_id: "" })}>
-              <X size={16} />
-              清除筛选
+        <div className="report-filter-row">
+          <div className="filter-panel report-filter-panel">
+            <label>
+              <span>项目</span>
+              <select value={filters.project_id} onChange={(event) => setFilters({ ...filters, project_id: event.target.value })}>
+                <option value="">全部项目</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>严重程度</span>
+              <select
+                value={viewSeverity || filters.severity}
+                disabled={!!viewSeverity}
+                onChange={(event) => setFilters({ ...filters, severity: event.target.value })}
+              >
+                <option value="">全部</option>
+                {Object.entries(SEVERITY_META).map(([key, meta]) => (
+                  <option key={key} value={key}>
+                    {meta.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>状态</span>
+              <select
+                value={viewStatus || filters.status}
+                disabled={!!viewStatus}
+                onChange={(event) => setFilters({ ...filters, status: event.target.value })}
+              >
+                <option value="">全部状态</option>
+                <option value="confirmed">已确认</option>
+                <option value="ignored">已忽略</option>
+              </select>
+            </label>
+            <label>
+              <span>发现时间</span>
+              <div className="date-range-control">
+                <input placeholder="开始日期" readOnly />
+                <span>→</span>
+                <input placeholder="结束日期" readOnly />
+              </div>
+            </label>
+          </div>
+          <div className="filter-panel report-search-panel">
+            <label className="filter-search">
+              <Search size={15} />
+              <input
+                value={filters.search}
+                onChange={(event) => setFilters({ ...filters, search: event.target.value })}
+                placeholder="搜索漏洞标题、编号、组件、标签..."
+              />
+            </label>
+            <button className="ghost-button compact" type="button">
+              <Settings size={15} />
+              筛选
             </button>
-          )}
-          <div className="result-count">
-            {filteredProjectCount} 个项目 / {filteredVulnCount} 条漏洞
           </div>
         </div>
         {loading ? (
           <EmptyState icon={Loader2} title="正在分析漏洞报告" />
-        ) : vulnerabilities.length === 0 ? (
+        ) : visibleVulnerabilities.length === 0 ? (
           <EmptyState icon={CheckCircle2} title="没有匹配的漏洞" subtitle="当前筛选范围内尚未发现漏洞。" />
         ) : (
-          <div className="folder-list">
-            {groups.map((group) => {
-              const expanded = expandedProjects[group.projectId] ?? true;
-              return (
-                <article className="project-folder-card" key={group.projectId}>
-                  <div className="folder-header">
-                    <button
-                      className="folder-toggle-main"
-                      type="button"
-                      onClick={() => setExpandedProjects({ ...expandedProjects, [group.projectId]: !expanded })}
-                    >
-                      <span className="project-folder large">
-                        <Folder size={28} />
-                      </span>
-                      <span className="folder-title">
-                        <strong>{group.projectName}</strong>
-                        <span>
-                          {group.projectId} · {group.items.length} 条漏洞 · 最新发现 {formatTime(group.latest)}
-                        </span>
-                      </span>
-                    </button>
-                    <span className="severity-row">
-                      {Object.entries(group.counts)
-                        .filter(([, count]) => count > 0)
-                        .map(([level, count]) => (
-                          <Badge key={level} tone={SEVERITY_META[level].tone}>
-                            {SEVERITY_META[level].label} {count}
-                          </Badge>
-                        ))}
-                    </span>
-                    <button
-                      className="ghost-button compact"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        exportMd({ projectId: group.projectId, title: group.projectId });
-                      }}
-                    >
-                      <Download size={16} />
-                      导出 MD
-                    </button>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      onClick={() => setExpandedProjects({ ...expandedProjects, [group.projectId]: !expanded })}
-                    >
-                      {expanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
-                    </button>
-                  </div>
-                  {expanded && (
-                    <div className="vuln-list">
-                      {group.items.map((vuln) => (
-                        <VulnerabilityItem
-                          key={vuln.id}
-                          vuln={vuln}
-                          expanded={!!expandedVulns[vuln.id]}
-                          onToggle={() => setExpandedVulns({ ...expandedVulns, [vuln.id]: !expandedVulns[vuln.id] })}
-                          onExport={() => exportMd({ vulnerabilityId: vuln.id, title: `${vuln.project_id}-${vuln.fact_id}` })}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
+          <div className="vuln-report-grid">
+            <article className="vuln-table-card">
+              <header className="vuln-table-title">
+                <div>
+                  <h2>漏洞列表</h2>
+                  <p>点击单条漏洞查看证据、过程和证明数据包</p>
+                </div>
+                <button className="ghost-button compact" type="button" disabled={!visibleIds.length} onClick={toggleVisibleSelected}>
+                  {allVisibleSelected ? "取消全选" : "全选当前"}
+                </button>
+              </header>
+              <div className="vuln-table-head">
+                <span />
+                <span>漏洞名称</span>
+                <span>所属项目</span>
+                <span>严重度</span>
+                <span>状态</span>
+                <span>发现时间</span>
+                <span>操作</span>
+              </div>
+              <div className="vuln-table-body">
+                {visibleVulnerabilities.map((vuln) => (
+                  <VulnerabilityItem
+                    key={vuln.id}
+                    vuln={vuln}
+                    selected={selectedIds.includes(vuln.id)}
+                    onSelect={() => toggleSelected(vuln.id)}
+                    expanded={!!expandedVulns[vuln.id]}
+                    onToggle={() => setExpandedVulns({ ...expandedVulns, [vuln.id]: !expandedVulns[vuln.id] })}
+                    onExport={() => exportMd({ selected: [vuln.id], title: `${vuln.project_id}-${vuln.fact_id}` })}
+                    onStatusChange={(status) => updateVulnerabilityStatus(vuln, status)}
+                  />
+                ))}
+              </div>
+              <footer className="vuln-table-footer">
+                <span>共 {filteredVulnCount} 条</span>
+                <div className="pagination-size">10 条/页 <ChevronDown size={14} /></div>
+                <div className="pagination">
+                  <button type="button" disabled>
+                    <ChevronRight size={14} />
+                  </button>
+                  <button className="active" type="button">1</button>
+                  <button type="button">2</button>
+                  <button type="button">3</button>
+                  <button type="button">4</button>
+                  <button type="button">5</button>
+                  <span>...</span>
+                  <button type="button">13</button>
+                  <button type="button">
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </footer>
+            </article>
+            <aside className="vuln-side-panels">
+              <VulnerabilityTrend data={trendData} />
+              <SeverityTopList items={severityTop} />
+              <VulnerabilityStatusDistribution data={statusDistribution} />
+            </aside>
           </div>
         )}
+      </section>
+    </>
+  );
+}
+
+function ExportRecordsView({ setToast }) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    try {
+      const list = await apiRequest("/api/vulnerabilities/export-records");
+      setRecords(Array.isArray(list) ? list : []);
+    } catch (error) {
+      if (!silent) setToast({ type: "danger", message: error.message || "导出记录加载失败" });
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [setToast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => load({ silent: true }), 8000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const formatLabels = { md: "Markdown", markdown: "Markdown", json: "JSON", csv: "CSV", pdf: "PDF", docx: "Word", word: "Word" };
+
+  return (
+    <>
+      <PageHeader
+        compact
+        title="漏洞报告 / 导出记录"
+        subtitle="查看历史导出操作，包括导出范围、格式和时间"
+      />
+      <section className="content-wrap vulnerability-report-page">
+        <article className="vuln-table-card export-records-card">
+          <header className="vuln-table-title">
+            <div>
+              <h2>导出记录</h2>
+              <p>每次导出漏洞报告都会在此留痕</p>
+            </div>
+            <button className="ghost-button compact" type="button" onClick={() => load()}>
+              <RefreshCw size={15} />
+              刷新
+            </button>
+          </header>
+          <div className="export-records-head">
+            <span>导出时间</span>
+            <span>范围</span>
+            <span>格式</span>
+            <span>漏洞数</span>
+            <span>文件名</span>
+          </div>
+          <div className="export-records-body">
+            {loading ? (
+              <EmptyState icon={Loader2} title="正在加载导出记录" />
+            ) : records.length === 0 ? (
+              <EmptyState icon={Download} title="暂无导出记录" subtitle="在漏洞列表中导出报告后，记录会显示在这里。" />
+            ) : (
+              records.map((record) => (
+                <div className="export-records-row" key={record.id}>
+                  <time>{formatTime(record.created_at)}</time>
+                  <div className="export-scope-cell">
+                    <strong>{record.scope}</strong>
+                    {record.project_name && <span>{record.project_name}</span>}
+                  </div>
+                  <span><Badge tone="info">{formatLabels[record.format] || record.format.toUpperCase()}</Badge></span>
+                  <span className="export-count">{record.vulnerability_count}</span>
+                  <code title={record.filename}>{record.filename}</code>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
       </section>
     </>
   );
@@ -1600,28 +1908,260 @@ function summarizeSeverity(items) {
   );
 }
 
-function VulnerabilityItem({ vuln, expanded, onToggle, onExport }) {
-  const meta = SEVERITY_META[vuln.severity] || SEVERITY_META.low;
+function buildVulnerabilityTrend(items) {
+  // Build a fixed 7-day calendar window ending today (local time), so the
+  // chart always shows 近 7 天 even on days with no findings.
+  const dayKeys = [];
+  const byKey = new Map();
+  const now = new Date();
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    dayKeys.push(key);
+    byKey.set(key, {
+      date: key,
+      label: `${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`,
+      total: 0,
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+    });
+  }
+  items.forEach((item) => {
+    const key = String(item.discovered_at || "").slice(0, 10);
+    const entry = byKey.get(key);
+    if (!entry) return;
+    entry.total += 1;
+    if (entry[item.severity] !== undefined) entry[item.severity] += 1;
+  });
+  return dayKeys.map((key) => byKey.get(key));
+}
+
+function buildSeverityTop(items, limit = 5) {
+  const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+  return [...items]
+    .sort((a, b) => {
+      const byRank = (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9);
+      if (byRank !== 0) return byRank;
+      return String(b.discovered_at || "").localeCompare(String(a.discovered_at || ""));
+    })
+    .slice(0, limit);
+}
+
+function buildStatusDistribution(items) {
+  return items.reduce(
+    (acc, item) => {
+      if (item.status === "ignored") acc.ignored += 1;
+      else acc.confirmed += 1;
+      acc.total += 1;
+      return acc;
+    },
+    { total: 0, confirmed: 0, ignored: 0 },
+  );
+}
+
+function VulnerabilityTrend({ data }) {
+  const series = [
+    ["critical", "严重", "#ff375f"],
+    ["high", "高危", "#ff7a1a"],
+    ["medium", "中危", "#f5b700"],
+    ["low", "低危", "#0a84ff"],
+  ];
+  const hasData = data.some((item) => item.total > 0);
+  const max = Math.max(1, ...data.flatMap((item) => series.map(([key]) => item[key] || 0)));
+  const width = 280;
+  const height = 120;
+  const padX = 6;
+  const innerW = width - padX * 2;
+  const pointX = (index) => (data.length <= 1 ? width / 2 : padX + (index / (data.length - 1)) * innerW);
+  const pointY = (value) => height - ((value || 0) / max) * (height - 18) - 9;
+  const toPoints = (key) => data.map((item, index) => `${pointX(index)},${pointY(item[key])}`).join(" ");
   return (
-    <article className="vuln-item">
-      <div className="vuln-summary">
-        <div>
+    <section className="vuln-analysis-card">
+      <header>
+        <h3>漏洞趋势</h3>
+        <span>近 7 天</span>
+      </header>
+      {!hasData ? (
+        <p className="analysis-empty">近 7 天暂无新发现</p>
+      ) : (
+        <>
+          <svg className="trend-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="漏洞趋势">
+            {series.map(([key, label, color]) => (
+              <polyline
+                key={key}
+                points={toPoints(key)}
+                fill="none"
+                stroke={color}
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-label={label}
+              />
+            ))}
+            {data.map((item, index) =>
+              series.map(([key, label, color]) => (
+                <circle
+                  key={`${item.date}-${key}`}
+                  cx={pointX(index)}
+                  cy={pointY(item[key])}
+                  r="2.8"
+                  fill={color}
+                  aria-label={`${item.date} ${label} ${item[key] || 0}`}
+                />
+              )),
+            )}
+          </svg>
+          <div className="trend-axis">
+            {data.map((item) => (
+              <span key={`axis-${item.date}`}>{item.label}</span>
+            ))}
+          </div>
+          <div className="trend-legend">
+            {series.map(([key, label, color]) => (
+              <span key={key}>
+                <i style={{ background: color }} />
+                <strong>{data.reduce((sum, item) => sum + (item[key] || 0), 0)}</strong>
+                {label}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function SeverityTopList({ items }) {
+  return (
+    <section className="vuln-analysis-card severity-top-card">
+      <header>
+        <h3>严重漏洞 TOP 5</h3>
+        <span>{items.length} 条</span>
+      </header>
+      <div className="severity-top-list">
+        {items.length === 0 ? (
+          <p className="analysis-empty">暂无漏洞</p>
+        ) : (
+          items.map((item, index) => {
+            const meta = SEVERITY_META[item.severity] || SEVERITY_META.low;
+            return (
+              <article key={`top-${item.id}`}>
+                <span className="severity-top-rank">{index + 1}</span>
+                <span className={cn("status-badge", meta.tone)}>{meta.label}</span>
+                <strong title={item.title}>{clampText(item.title, 30)}</strong>
+                <code>{item.fact_id}</code>
+              </article>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
+function VulnerabilityStatusDistribution({ data }) {
+  const total = Math.max(0, data.total || 0);
+  const confirmed = data.confirmed || 0;
+  const ignored = data.ignored || 0;
+  const radius = 36;
+  const circumference = 2 * Math.PI * radius;
+  const confirmedLength = total ? (confirmed / total) * circumference : 0;
+  const ignoredLength = total ? (ignored / total) * circumference : 0;
+  return (
+    <section className="vuln-analysis-card status-distribution-card">
+      <header>
+        <h3>状态分布</h3>
+        <span>实时数据</span>
+      </header>
+      {total === 0 ? (
+        <p className="analysis-empty">暂无状态数据</p>
+      ) : (
+        <div className="status-distribution">
+          <svg viewBox="0 0 96 96" role="img" aria-label="漏洞状态分布">
+            <circle className="donut-track" cx="48" cy="48" r={radius} />
+            <circle
+              className="donut-segment confirmed"
+              cx="48"
+              cy="48"
+              r={radius}
+              strokeDasharray={`${confirmedLength} ${circumference - confirmedLength}`}
+            />
+            <circle
+              className="donut-segment ignored"
+              cx="48"
+              cy="48"
+              r={radius}
+              strokeDasharray={`${ignoredLength} ${circumference - ignoredLength}`}
+              strokeDashoffset={-confirmedLength}
+            />
+            <text x="48" y="45" textAnchor="middle">
+              {total}
+            </text>
+            <text x="48" y="59" textAnchor="middle" className="donut-caption">
+              总计
+            </text>
+          </svg>
+          <div className="status-distribution-list">
+            <span>
+              <i className="status-dot confirmed" />
+              已确认
+              <strong>{confirmed}</strong>
+            </span>
+            <span>
+              <i className="status-dot ignored" />
+              已忽略
+              <strong>{ignored}</strong>
+            </span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VulnerabilityItem({ vuln, selected, onSelect, expanded, onToggle, onExport, onStatusChange }) {
+  const meta = SEVERITY_META[vuln.severity] || SEVERITY_META.low;
+  const ignored = vuln.status === "ignored";
+  return (
+    <article className={cn("vuln-table-item", ignored && "ignored")}>
+      <div className="vuln-table-row">
+        <label className="vuln-select">
+          <input type="checkbox" checked={selected} onChange={onSelect} />
+        </label>
+        <div className="vuln-name-cell">
           <div className="vuln-meta">
-            <Badge tone={meta.tone}>{meta.label}</Badge>
             <span>{vuln.fact_id}</span>
-            <span>{formatTime(vuln.discovered_at)}</span>
           </div>
           <h3>{vuln.title}</h3>
-          <p>{clampText(vuln.description, 220)}</p>
         </div>
+        <div className="vuln-project-cell">
+          <strong>{vuln.project_name}</strong>
+          <span>{vuln.project_id}</span>
+        </div>
+        <div>
+          <Badge tone={meta.tone}>{meta.label}</Badge>
+        </div>
+        <div>
+          <Badge tone={ignored ? "muted" : "success"}>{ignored ? "已忽略" : "已确认"}</Badge>
+        </div>
+        <time>{formatTime(vuln.discovered_at)}</time>
         <div className="button-row">
-          <button className="ghost-button compact" type="button" onClick={onExport}>
-            <Download size={16} />
-            导出
+          <button
+            className={cn("table-action", ignored ? "success" : "warning")}
+            type="button"
+            title={ignored ? "恢复确认" : "设为忽略"}
+            aria-label={ignored ? "恢复确认" : "设为忽略"}
+            onClick={() => onStatusChange(ignored ? "confirmed" : "ignored")}
+          >
+            {ignored ? <CheckCircle2 size={16} /> : <X size={16} />}
           </button>
-          <button className="ghost-button compact" type="button" onClick={onToggle}>
-            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            查看详情
+          <button className="table-action" type="button" onClick={onExport} title="导出当前漏洞" aria-label="导出当前漏洞">
+            <Download size={16} />
+          </button>
+          <button className="table-action" type="button" onClick={onToggle} title="查看详情" aria-label="查看详情">
+            {expanded ? <ChevronDown size={16} /> : <Eye size={16} />}
           </button>
         </div>
       </div>

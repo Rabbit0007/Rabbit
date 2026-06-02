@@ -18,9 +18,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# The allowed severity levels, matching the ``CHECK`` constraint on the
-# ``vulnerabilities.severity`` column in ``product_db.py``.
+# The allowed severity levels and review states, matching the ``CHECK``
+# constraints on the ``vulnerabilities`` table in ``product_db.py``.
 Severity = Literal["critical", "high", "medium", "low"]
+VulnerabilityStatus = Literal["confirmed", "ignored"]
 
 
 class Vulnerability(BaseModel):
@@ -37,6 +38,7 @@ class Vulnerability(BaseModel):
     title: str
     description: str
     severity: Severity
+    status: VulnerabilityStatus = "confirmed"
     discovered_at: str
     source_intent_id: str | None = None
     source_intent_description: str | None = None
@@ -57,6 +59,10 @@ class VulnerabilitySummary(BaseModel):
     low: int = 0
 
 
+class VulnerabilityStatusUpdate(BaseModel):
+    status: VulnerabilityStatus
+
+
 class VulnerabilityExportRequest(BaseModel):
     """Parameters for a vulnerability export.
 
@@ -69,3 +75,18 @@ class VulnerabilityExportRequest(BaseModel):
     format: Literal["json", "csv"]
     severity: Severity | None = None
     project_id: str | None = None
+
+
+class ExportRecord(BaseModel):
+    """A single historical export, as listed on the 导出记录 page."""
+
+    id: int
+    created_at: str
+    format: str
+    filename: str
+    scope: str
+    vulnerability_count: int = 0
+    project_id: str | None = None
+    project_name: str | None = None
+    severity: str | None = None
+    status: str | None = None

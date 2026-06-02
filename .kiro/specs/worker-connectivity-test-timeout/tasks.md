@@ -94,7 +94,7 @@ simulated dispatcher latency exceeds that `timeout`, otherwise returns a `_FakeR
   - Mark this task complete when the tests are written, run, and passing on unfixed code.
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 3. Fix for slow test/config proxy operations spuriously timing out at the shared status timeout
+- [x] 3. Fix for slow test/config proxy operations spuriously timing out at the shared status timeout
 
   - [x] 3.1 Add the dedicated timeout configuration constants and resolver in `workers.py`
     - In `cairn/src/cairn/server/routers/workers.py` add `TEST_TIMEOUT_ENV =
@@ -135,7 +135,7 @@ simulated dispatcher latency exceeds that `timeout`, otherwise returns a `_FakeR
     - _Expected_Behavior: operator-tunable dedicated timeout var, independent of status polling (from design)_
     - _Requirements: 2.4_
 
-  - [-] 3.4 Add Fix Checking tests for the dedicated longer timeout
+  - [x] 3.4 Add Fix Checking tests for the dedicated longer timeout
     - **Property 1: Expected Behavior** - Test/Config Operations Use the Dedicated Longer Timeout
     - **IMPORTANT**: This extends the validation beyond the task 1 re-run — write the additional
       Fix-Checking cases from the design here (using the same latency-aware fake from task 1).
@@ -153,7 +153,7 @@ simulated dispatcher latency exceeds that `timeout`, otherwise returns a `_FakeR
       result.
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ] 3.5 Verify the bug condition exploration test now passes
+  - [x] 3.5 Verify the bug condition exploration test now passes
     - **Property 1: Expected Behavior** - Slow Test/Config Operations Succeed Under the Longer Timeout
     - **IMPORTANT**: Re-run the SAME test from task 1 — do NOT write a new test. The task 1 test
       encodes the expected behavior; when it passes it confirms the bug is fixed.
@@ -162,7 +162,7 @@ simulated dispatcher latency exceeds that `timeout`, otherwise returns a `_FakeR
       real dispatcher result, and `requests.request` is called with `timeout ≈ 30.0`).
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-  - [ ] 3.6 Verify the preservation property tests still pass
+  - [x] 3.6 Verify the preservation property tests still pass
     - **Property 2: Preservation** - Status Polling, Error Handling, and Snapshot Reshaping Unchanged
     - **IMPORTANT**: Re-run the SAME tests from task 2 — do NOT write new tests.
     - Run with: `uv run --with pytest --with httpx --with hypothesis python -m pytest` (from `cairn/`).
@@ -171,7 +171,7 @@ simulated dispatcher latency exceeds that `timeout`, otherwise returns a `_FakeR
       reshaping are unchanged).
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 4. Checkpoint - Ensure all tests pass
+- [x] 4. Checkpoint - Ensure all tests pass
   - Run the full suite from the `cairn/` directory:
     `uv run --with pytest --with httpx --with hypothesis python -m pytest`
   - Confirm the task 1 bug-condition test now passes, the Fix Checking tests (task 3.4) pass, and the

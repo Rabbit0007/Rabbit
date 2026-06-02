@@ -1,34 +1,45 @@
-"""Fix Checking tests for the worker connectivity test timeout.
+"""Fix-Checking tests for the worker connectivity test timeout bugfix.
 
-Spec: ``.kiro/specs/worker-connectivity-test-timeout`` — Task 3.4 (Fix Checking).
+Spec: ``.kiro/specs/worker-connectivity-test-timeout`` — Task 3.4
+(**Property 1: Expected Behavior — Test/Config Operations Use the Dedicated
+Longer Timeout**).
 
-These tests validate **Property 1 (Expected Behavior)** from the design: once the
-dedicated longer ``_test_timeout()`` (``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT``,
-default ``DEFAULT_INTERNAL_TEST_TIMEOUT`` = 30.0s) is wired into the test/config
-proxy handlers, a healthy-but-slow test/config operation whose dispatcher-side
-latency exceeds the short 2.0s status-polling timeout — but is within the longer
-test timeout — returns the dispatcher's real result (HTTP 200) instead of a
-timeout-based 503.
+These tests extend the validation beyond the Task 1 bug-condition re-run
+(``tests/test_workers_timeout_bugfix.py``). They encode the additional
+**Fix-Checking** cases from the design's "Fix Checking" section, asserting the
+*fixed* router applies the dedicated longer ``_test_timeout()``
+(``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT``, default 30.0s) to the test/config
+operations, so a healthy-but-slow operation returns the dispatcher's real result
+instead of a timeout-based 503.
 
-The task-1 bug-condition tests (``tests/test_workers_timeout_bugfix.py``) already
-re-run as the primary Fix Checking gate (they flip from FAIL → PASS once the fix
-lands). This module adds the **additional** Fix-Checking cases called out in the
-design's "Fix Checking" section that the task-1 test does not cover:
+Formal property (design Fix Checking pseudocode)::
 
-* the dedicated env var **override** is honored (a low bound makes a slow op time
-  out again, proving the new var — not the status var — controls the timeout);
-* **invalid/unset** env values fall back to the 30.0s default; and
-* a **property-based** sweep over healthy latencies in ``(status_timeout,
-  test_timeout]`` always yields the dispatcher's success result.
+    FOR ALL X WHERE isBugCondition(X) DO
+      result := proxy_fixed(X)        # test/config ops use _test_timeout() (default 30s)
+      ASSERT X.dispatcherLatencySeconds <= testTimeout
+             IMPLIES result = dispatcherResult(X)   # no timeout-based 503
+    END FOR
 
-The first two listed cases (connectivity test + config read/write under the
-longer timeout) are included here too so this Fix Checking module is
-self-contained and distinct, per Task 3.4.
+Cases covered (design "Fix Checking" / tasks.md 3.4):
 
-Conventions mirror ``tests/test_workers_timeout_bugfix.py`` and
-``tests/test_workers_router.py``: mount the ``workers`` router on a minimal
-FastAPI app and monkeypatch ``workers.requests`` with the same latency-aware
-fake / ``_FakeResponse`` — no real network or dispatcher is needed.
+1. Connectivity test under the longer timeout: latency 2.05s, default 30s →
+   HTTP 200 with the real ``WorkerConnectionTestResult`` (``ok: true``), and
+   ``requests.request`` invoked with ``timeout ≈ 30.0``.
+2. Config read/write under the longer timeout: latency 2.5s → 200 with the
+   masked ``WorkerConfigResponse`` (GET) and the applied config (PUT).
+3. Custom env override honored: ``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT=5`` →
+   latency 4s → 200; latency 6s → 503 (genuine timeout beyond the bound).
+4. Invalid/unset env falls back to 30s: var unset / ``"abc"`` / ``"-1"`` →
+   ``_test_timeout()`` returns 30.0 and a 2.05s test succeeds (200).
+5. Property-based: healthy test/config latencies in ``(status_timeout,
+   test_timeout]`` always return the dispatcher's success result under the fix.
+
+Conventions mirror ``tests/test_workers_timeout_bugfix.py``: mount the
+``workers`` router on a minimal FastAPI app and monkeypatch ``workers.requests``
+with the same latency-aware fake / ``_FakeResponse`` — no real network or
+dispatcher is needed.
+
+**Validates: Requirements 2.1, 2.2, 2.3, 2.4**
 """
 
 from __future__ import annotations
@@ -45,18 +56,30 @@ from cairn.server.routers import workers
 from .conftest import BASE_URL
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# The dedicated longer test/config timeout introduced by the fix
+# (workers.DEFAULT_INTERNAL_TEST_TIMEOUT). The short status-polling timeout
+# (workers.DEFAULT_INTERNAL_TIMEOUT) is 2.0s.
+DEFAULT_TEST_TIMEOUT = 30.0
+SHORT_STATUS_TIMEOUT = 2.0
+
+_UNAVAILABLE_MESSAGE = {
+    "TEST": "Worker connectivity test failed",
+    "CONFIG_GET": "Worker config unavailable",
+    "CONFIG_PUT": "Worker config update failed",
+}
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def workers_app(temp_db) -> FastAPI:
-    """A minimal FastAPI app mounting only the workers router.
-
-    ``temp_db`` (from conftest) configures an isolated DB; the test/config proxy
-    endpoints exercised here do not touch it, but the fixture keeps the router's
-    DB-backed dependencies importable and mirrors the existing test setup.
-    """
+    """A minimal FastAPI app mounting only the workers router."""
     app = FastAPI()
     app.include_router(workers.router)
     return app
@@ -69,19 +92,19 @@ def client(workers_app) -> TestClient:
 
 @pytest.fixture(autouse=True)
 def _clear_timeout_env(monkeypatch):
-    """Unset both timeout env vars so the defaults apply unless a test sets them.
+    """Start each test with the timeout env vars unset so the defaults apply.
 
-    Clearing ``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT`` pins ``_test_timeout()``
-    at its 30.0s default; clearing ``CAIRN_DISPATCHER_INTERNAL_TIMEOUT`` keeps
-    the status timeout at 2.0s so the (status_timeout, test_timeout] window the
-    fix targets is well defined.
+    Unset ``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT`` pins ``_test_timeout()`` at
+    the 30.0s default; unset ``CAIRN_DISPATCHER_INTERNAL_TIMEOUT`` keeps status
+    polling at 2.0s (it is not exercised here, but the isolation matches the
+    rest of the suite).
     """
     monkeypatch.delenv("CAIRN_DISPATCHER_INTERNAL_TIMEOUT", raising=False)
     monkeypatch.delenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", raising=False)
 
 
 # ---------------------------------------------------------------------------
-# Test doubles for the dispatcher proxy call
+# Test doubles for the dispatcher proxy call (same convention as the task-1 file)
 # ---------------------------------------------------------------------------
 
 
@@ -116,7 +139,7 @@ def _test_result_body(name: str = "mock-1") -> dict:
         "worker_name": name,
         "ok": True,
         "returncode": 0,
-        "duration_ms": 12,
+        "duration_ms": 2050,
         "http_status": None,
         "response_preview": "pong",
         "stderr_preview": "",
@@ -134,9 +157,11 @@ def _install_latency_aware_fake(monkeypatch, *, simulated_latency: float, captur
     """Patch ``workers.requests.request`` with a latency-aware fake.
 
     The fake records the ``timeout`` it was called with and raises
-    ``requests.Timeout`` when ``simulated_latency > timeout`` (modelling a healthy
-    dispatcher whose work outlasts the applied proxy timeout). Otherwise it
-    returns a ``_FakeResponse`` carrying the dispatcher's success body.
+    ``requests.Timeout`` when ``simulated_latency > timeout`` (modelling a
+    healthy dispatcher whose work outlasts the applied proxy timeout). Otherwise
+    it returns a ``_FakeResponse`` carrying the dispatcher's success body, keyed
+    by endpoint (``{"ok": true}`` for the test endpoint, a masked config body for
+    config GET/PUT).
     """
 
     def fake_request(method, url, json=None, timeout=None):  # noqa: ARG001
@@ -154,6 +179,7 @@ def _install_latency_aware_fake(monkeypatch, *, simulated_latency: float, captur
     monkeypatch.setattr(workers.requests, "request", fake_request)
 
 
+# Scoped input domain: the three test/config kinds with the request/assert shapes.
 def _do_test_op(client) -> "requests.Response":
     return client.post("/api/workers/config/test", json={"worker": _worker_item()})
 
@@ -172,233 +198,220 @@ _OPERATIONS = {
     "CONFIG_PUT": (_do_config_put, lambda body: body.get("workers", [{}])[0].get("name") == "mock-1"),
 }
 
-# The dedicated longer test/config timeout default introduced by the fix
-# (design: DEFAULT_INTERNAL_TEST_TIMEOUT = 30.0s).
-DEFAULT_TEST_TIMEOUT = 30.0
-SHORT_STATUS_TIMEOUT = 2.0
+
+# ===========================================================================
+# Case 1 — Connectivity test under the longer timeout (latency 2.05s, default 30s)
+# ===========================================================================
 
 
-# ---------------------------------------------------------------------------
-# Fix Checking case 1 — connectivity test under the longer timeout
-# ---------------------------------------------------------------------------
-
-
-def test_connectivity_test_succeeds_under_longer_timeout(client, monkeypatch):
+def test_connectivity_test_under_longer_timeout_returns_ok(client, monkeypatch):
     """A 2.05s connectivity test succeeds under the default 30s test timeout.
 
-    Design Fix Checking case 1: ``POST /api/workers/config/test`` with simulated
-    latency 2.05s and the default ``_test_timeout()`` (30s) → HTTP 200 with the
-    real ``WorkerConnectionTestResult`` (``ok: true``), and ``requests.request``
-    invoked with ``timeout ≈ 30.0``.
+    The dispatcher-side test outlasts the short 2.0s status timeout but is well
+    within the dedicated 30s ``_test_timeout()``. The fixed proxy must return
+    HTTP 200 with the real ``WorkerConnectionTestResult`` (``ok: true``) and have
+    invoked ``requests.request`` with ``timeout ≈ 30.0``.
 
-    **Validates: Requirements 2.1, 2.2**
+    **Validates: Requirements 2.1, 2.2, 2.4**
     """
-    captured_timeouts: list = []
-    _install_latency_aware_fake(
-        monkeypatch, simulated_latency=2.05, captured_timeouts=captured_timeouts
-    )
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=2.05, captured_timeouts=captured)
 
     resp = _do_test_op(client)
 
-    assert resp.status_code == 200, (
-        f"a healthy 2.05s connectivity test returned HTTP {resp.status_code} "
-        f"({resp.json()!r}); requests.request used timeout={captured_timeouts}"
-    )
+    assert resp.status_code == 200, resp.json()
     body = resp.json()
     assert body["ok"] is True
     assert body["worker_name"] == "mock-1"
-    assert captured_timeouts and captured_timeouts[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT), (
-        f"connectivity test must use the dedicated longer timeout (~{DEFAULT_TEST_TIMEOUT}s); "
-        f"got timeout={captured_timeouts}"
-    )
+    # Root cause is fixed: the test op is proxied with the longer timeout.
+    assert captured, "requests.request was never invoked"
+    assert captured[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
 
 
-# ---------------------------------------------------------------------------
-# Fix Checking case 2 — config read/write under the longer timeout
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Case 2 — Config read/write under the longer timeout (latency 2.5s)
+# ===========================================================================
 
 
-@pytest.mark.parametrize("kind", ["CONFIG_GET", "CONFIG_PUT"])
-def test_config_read_write_succeeds_under_longer_timeout(client, monkeypatch, kind):
-    """Slow (2.5s) config read/write succeeds under the default 30s test timeout.
-
-    Design Fix Checking case 2: ``GET``/``PUT /api/workers/config`` with simulated
-    latency 2.5s → HTTP 200 with the masked ``WorkerConfigResponse`` (GET) / the
-    applied config (PUT), and ``requests.request`` invoked with ``timeout ≈ 30.0``.
+def test_config_get_under_longer_timeout_returns_masked_config(client, monkeypatch):
+    """GET /api/workers/config at 2.5s succeeds with the masked config under 30s.
 
     **Validates: Requirements 2.3, 2.4**
     """
-    captured_timeouts: list = []
-    _install_latency_aware_fake(
-        monkeypatch, simulated_latency=2.5, captured_timeouts=captured_timeouts
-    )
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=2.5, captured_timeouts=captured)
+
+    resp = _do_config_get(client)
+
+    assert resp.status_code == 200, resp.json()
+    assert resp.json() == _config_body()
+    assert captured[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
+
+
+def test_config_put_under_longer_timeout_returns_applied_config(client, monkeypatch):
+    """PUT /api/workers/config at 2.5s succeeds with the applied config under 30s.
+
+    **Validates: Requirements 2.3, 2.4**
+    """
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=2.5, captured_timeouts=captured)
+
+    resp = _do_config_put(client)
+
+    assert resp.status_code == 200, resp.json()
+    assert resp.json() == _config_body()
+    assert captured[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
+
+
+@pytest.mark.parametrize("kind", ["TEST", "CONFIG_GET", "CONFIG_PUT"])
+@pytest.mark.parametrize("latency", [2.05, 2.5])
+def test_all_test_config_ops_succeed_under_longer_timeout(client, monkeypatch, kind, latency):
+    """Every test/config op whose latency exceeds 2.0s but is within 30s returns 200.
+
+    Parameterized sweep over the three buggy kinds and the two representative
+    latencies from the design — the direct positive counterpart to the task-1
+    bug-condition cases.
+
+    **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
+    """
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=latency, captured_timeouts=captured)
     do_op, body_ok = _OPERATIONS[kind]
 
     resp = do_op(client)
 
     assert resp.status_code == 200, (
-        f"a healthy 2.5s {kind} op returned HTTP {resp.status_code} "
-        f"({resp.json()!r}); requests.request used timeout={captured_timeouts}"
+        f"{kind} at latency {latency}s returned {resp.status_code} ({resp.json()!r}); "
+        f"expected 200 under the {DEFAULT_TEST_TIMEOUT}s test timeout. "
+        f"captured timeouts={captured}"
     )
-    body = resp.json()
-    assert body_ok(body), f"unexpected config body for {kind}: {body!r}"
-    assert body["workers"][0]["name"] == "mock-1"
-    assert captured_timeouts and captured_timeouts[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT), (
-        f"{kind} must use the dedicated longer timeout (~{DEFAULT_TEST_TIMEOUT}s); "
-        f"got timeout={captured_timeouts}"
-    )
+    assert body_ok(resp.json())
+    assert captured[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
 
 
-# ---------------------------------------------------------------------------
-# Fix Checking case 3 — custom env override honored
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Case 3 — Custom env override honored (CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT=5)
+# ===========================================================================
 
 
 def test_custom_env_override_allows_op_within_bound(client, monkeypatch):
-    """``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT=5`` lets a 4s op succeed (200).
+    """With the test timeout set to 5s, a 4s op succeeds (within the configured bound).
 
-    Design Fix Checking case 3 (within bound): with the dedicated var set to 5s,
-    a 4s test completes within the configured bound → HTTP 200, and the proxy is
-    invoked with ``timeout ≈ 5.0`` (the override, not the 30s default).
-
-    **Validates: Requirements 2.1, 2.4**
+    **Validates: Requirements 2.4**
     """
     monkeypatch.setenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", "5")
-    captured_timeouts: list = []
-    _install_latency_aware_fake(
-        monkeypatch, simulated_latency=4.0, captured_timeouts=captured_timeouts
-    )
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=4.0, captured_timeouts=captured)
 
     resp = _do_test_op(client)
 
-    assert resp.status_code == 200, (
-        f"a 4s test under a 5s configured timeout returned HTTP {resp.status_code} "
-        f"({resp.json()!r}); requests.request used timeout={captured_timeouts}"
-    )
+    assert resp.status_code == 200, resp.json()
     assert resp.json()["ok"] is True
-    assert captured_timeouts and captured_timeouts[-1] == pytest.approx(5.0), (
-        f"the dedicated env override (5s) must control the test timeout; got {captured_timeouts}"
-    )
+    assert captured[-1] == pytest.approx(5.0)
 
 
 def test_custom_env_override_times_out_beyond_bound(client, monkeypatch):
-    """``CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT=5`` makes a 6s op time out (503).
+    """With the test timeout set to 5s, a 6s op genuinely times out → 503.
 
-    Design Fix Checking case 3 (beyond bound): with the dedicated var set to 5s,
-    a 6s test genuinely exceeds the configured bound → HTTP 503 "Worker
-    connectivity test failed". This proves the *dedicated* var (not the status
-    var) controls the test/config timeout.
+    This demonstrates the dedicated env var actually controls the test/config
+    timeout: a latency beyond the configured bound still maps to the per-endpoint
+    503 connectivity warning (genuine timeout, not a spurious one).
 
-    **Validates: Requirement 2.4**
+    **Validates: Requirements 2.4**
     """
     monkeypatch.setenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", "5")
-    captured_timeouts: list = []
-    _install_latency_aware_fake(
-        monkeypatch, simulated_latency=6.0, captured_timeouts=captured_timeouts
-    )
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=6.0, captured_timeouts=captured)
 
     resp = _do_test_op(client)
 
-    assert resp.status_code == 503, (
-        f"a 6s test under a 5s configured timeout should time out (503); got "
-        f"HTTP {resp.status_code} ({resp.json()!r})"
-    )
-    assert resp.json()["detail"]["message"] == "Worker connectivity test failed"
-    assert captured_timeouts and captured_timeouts[-1] == pytest.approx(5.0)
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == {
+        "message": _UNAVAILABLE_MESSAGE["TEST"],
+        "last_updated": None,
+    }
+    assert captured[-1] == pytest.approx(5.0)
 
 
-# ---------------------------------------------------------------------------
-# Fix Checking case 4 — invalid/unset env falls back to the 30s default
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Case 4 — Invalid/unset env falls back to the 30s default
+# ===========================================================================
 
 
-@pytest.mark.parametrize(
-    "env_value",
-    [
-        None,  # unset (delenv)
-        "",  # blank
-        "abc",  # non-numeric
-        "-1",  # non-positive
-        "0",  # non-positive
-    ],
-)
-def test_invalid_or_unset_env_falls_back_to_default(client, monkeypatch, env_value):
-    """Unset/invalid/non-positive env → ``_test_timeout()`` is 30.0 and a 2.05s test passes.
+@pytest.mark.parametrize("env_value", [None, "", "   ", "abc", "-1", "0"])
+def test_invalid_or_unset_env_falls_back_to_30s_default(client, monkeypatch, env_value):
+    """Unset/blank/non-numeric/non-positive test-timeout env → 30.0s default.
 
-    Design Fix Checking case 4: with the var unset or set to ``""`` / ``"abc"`` /
-    ``"-1"`` / ``"0"``, ``_test_timeout()`` returns the 30.0s default, so a 2.05s
-    connectivity test succeeds (HTTP 200) and the proxy uses ``timeout ≈ 30.0``.
+    ``_test_timeout()`` falls back to 30.0, so a 2.05s op (which exceeds the 2.0s
+    status timeout) still succeeds with the real result, and ``requests.request``
+    is invoked with ``timeout ≈ 30.0``.
 
-    **Validates: Requirement 2.4**
+    **Validates: Requirements 2.4**
     """
     if env_value is None:
         monkeypatch.delenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", raising=False)
     else:
         monkeypatch.setenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", env_value)
 
-    # The resolver itself must report the default.
-    assert workers._test_timeout() == pytest.approx(DEFAULT_TEST_TIMEOUT)
-
-    captured_timeouts: list = []
-    _install_latency_aware_fake(
-        monkeypatch, simulated_latency=2.05, captured_timeouts=captured_timeouts
-    )
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=2.05, captured_timeouts=captured)
 
     resp = _do_test_op(client)
 
-    assert resp.status_code == 200, (
-        f"with env={env_value!r} the test timeout should fall back to "
-        f"{DEFAULT_TEST_TIMEOUT}s and a 2.05s test should pass; got HTTP "
-        f"{resp.status_code} ({resp.json()!r})"
-    )
+    assert resp.status_code == 200, resp.json()
     assert resp.json()["ok"] is True
-    assert captured_timeouts and captured_timeouts[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
+    assert captured[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
 
 
-# ---------------------------------------------------------------------------
-# Fix Checking case 5 — property-based sweep over healthy latencies
-# ---------------------------------------------------------------------------
+def test_test_timeout_resolver_falls_back_on_invalid(monkeypatch):
+    """Unit check: ``_test_timeout()`` returns 30.0 for invalid env and is honored when valid.
+
+    **Validates: Requirements 2.4**
+    """
+    monkeypatch.delenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", raising=False)
+    assert workers._test_timeout() == pytest.approx(DEFAULT_TEST_TIMEOUT)
+
+    for bad in ["", "   ", "abc", "-1", "0"]:
+        monkeypatch.setenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", bad)
+        assert workers._test_timeout() == pytest.approx(DEFAULT_TEST_TIMEOUT), bad
+
+    monkeypatch.setenv("CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT", "5")
+    assert workers._test_timeout() == pytest.approx(5.0)
 
 
-@settings(
-    max_examples=75,
-    deadline=None,
-    suppress_health_check=[HealthCheck.function_scoped_fixture],
-)
+# ===========================================================================
+# Case 5 — Property-based Fix Checking
+# ===========================================================================
+
+
+@settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(
     kind=st.sampled_from(["TEST", "CONFIG_GET", "CONFIG_PUT"]),
-    # Healthy dispatcher latencies strictly above the short status timeout (2.0s)
-    # and within the dedicated longer test timeout (default 30.0s): the exact
-    # window the fix is meant to cover.
+    # Healthy latencies strictly above the short status timeout (2.0s) and within
+    # the dedicated test timeout (30.0s): the exact bug-condition input domain.
     latency=st.floats(
-        min_value=SHORT_STATUS_TIMEOUT + 0.05,
-        max_value=DEFAULT_TEST_TIMEOUT - 0.05,
-        allow_nan=False,
-        allow_infinity=False,
+        min_value=2.0001, max_value=DEFAULT_TEST_TIMEOUT, allow_nan=False, allow_infinity=False
     ),
 )
 def test_property_healthy_slow_op_returns_dispatcher_result(client, monkeypatch, kind, latency):
-    """For all healthy latencies in ``(status_timeout, test_timeout]`` the fixed
-    proxy returns the dispatcher's success result (HTTP 200), never a timeout 503.
+    """Property 1 (Fix Checking): every healthy test/config op with latency in
+    ``(status_timeout, test_timeout]`` returns the dispatcher's success result.
 
-    Design Fix Checking (property-based, Property 1): the dedicated 30s test
-    timeout must comfortably cover every latency in the targeted window, so the
-    real dispatcher result is always surfaced and ``requests.request`` always
-    uses ``timeout ≈ 30.0``.
+    Under the fix the proxy applies the 30s ``_test_timeout()``, so the op never
+    hits a spurious timeout: HTTP 200 with the real body, and the captured
+    ``timeout`` is the dedicated longer value.
 
     **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
     """
-    captured_timeouts: list = []
-    _install_latency_aware_fake(
-        monkeypatch, simulated_latency=latency, captured_timeouts=captured_timeouts
-    )
+    captured: list = []
+    _install_latency_aware_fake(monkeypatch, simulated_latency=latency, captured_timeouts=captured)
     do_op, body_ok = _OPERATIONS[kind]
 
     resp = do_op(client)
 
     assert resp.status_code == 200, (
-        f"{kind} with healthy latency {latency}s returned HTTP {resp.status_code} "
-        f"({resp.json()!r}) instead of 200; requests.request used timeout={captured_timeouts}"
+        f"{kind} at latency {latency}s returned {resp.status_code} ({resp.json()!r}); "
+        f"expected 200 under the {DEFAULT_TEST_TIMEOUT}s test timeout. captured={captured}"
     )
     assert body_ok(resp.json())
-    assert captured_timeouts and captured_timeouts[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)
+    assert captured[-1] == pytest.approx(DEFAULT_TEST_TIMEOUT)

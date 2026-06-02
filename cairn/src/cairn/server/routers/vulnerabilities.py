@@ -24,11 +24,16 @@ from xml.sax.saxutils import escape as xml_escape
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
+from datetime import datetime, timezone
+
 from cairn.server.db import get_conn
 from cairn.server.vulnerabilities_models import (
+    ExportRecord,
     Severity,
     Vulnerability,
     VulnerabilitySummary,
+    VulnerabilityStatus,
+    VulnerabilityStatusUpdate,
 )
 from cairn.server.vulnerability_extraction import scan_all_projects
 
@@ -67,6 +72,7 @@ def _vulnerability_select(where_sql: str) -> str:
                 v.title       AS title,
                 v.description AS description,
                 v.severity    AS severity,
+                COALESCE(v.status, 'confirmed') AS status,
                 v.discovered_at AS discovered_at,
                 v.source_intent_id AS source_intent_id,
                 v.source_intent_description AS source_intent_description,
@@ -292,6 +298,7 @@ def _merge_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
             winner.model_copy(
                 update={
                     "id": f"vuln_{winner.project_id}_{re.sub(r'[^a-zA-Z0-9]+', '_', signature).strip('_').lower()}",
+                    "status": "confirmed" if any(item.status == "confirmed" for item in items) else "ignored",
                     "description": description,
                     "source_fact_ids": related_source_ids,
                     "related_fact_ids": related_fact_ids,
@@ -323,6 +330,10 @@ def list_vulnerabilities(
         default=None,
         description="Optional project filter; restricts results to one project.",
     ),
+    status: VulnerabilityStatus | None = Query(
+        default=None,
+        description="Optional review status filter (confirmed or ignored).",
+    ),
 ) -> list[Vulnerability]:
     """List vulnerabilities, optionally filtered by severity and/or project.
 
@@ -352,6 +363,10 @@ def list_vulnerabilities(
     if project_id is not None:
         clauses.append("v.project_id = ?")
         params.append(project_id)
+
+    if status is not None:
+        clauses.append("COALESCE(v.status, 'confirmed') = ?")
+        params.append(status)
 
     where_sql = ""
     if clauses:
@@ -412,7 +427,11 @@ _SUMMARY_ORDER = ("critical", "high", "medium", "low")
 
 
 def _query_filtered_vulnerabilities(
-    severity: str | None, project_id: str | None, vulnerability_id: str | None = None
+    severity: str | None,
+    project_id: str | None,
+    vulnerability_id: str | None = None,
+    vulnerability_ids: list[str] | None = None,
+    status: str | None = None,
 ) -> list[Vulnerability]:
     """Load vulnerabilities matching the active filters for export.
 
@@ -437,6 +456,10 @@ def _query_filtered_vulnerabilities(
         clauses.append("v.project_id = ?")
         params.append(project_id)
 
+    if status is not None:
+        clauses.append("COALESCE(v.status, 'confirmed') = ?")
+        params.append(status)
+
     where_sql = ""
     if clauses:
         where_sql = "WHERE " + " AND ".join(clauses)
@@ -456,6 +479,11 @@ def _query_filtered_vulnerabilities(
         vulnerabilities = [v for v in vulnerabilities if v.id == vulnerability_id]
         if not vulnerabilities:
             raise HTTPException(status_code=404, detail="Vulnerability not found")
+    if vulnerability_ids is not None:
+        wanted = set(vulnerability_ids)
+        vulnerabilities = [v for v in vulnerabilities if v.id in wanted]
+        if not vulnerabilities:
+            raise HTTPException(status_code=404, detail="Vulnerabilities not found")
     return vulnerabilities
 
 
@@ -692,6 +720,36 @@ def _export_filename(vulnerabilities: list[Vulnerability], extension: str) -> st
         base = projects[0] if len(projects) == 1 else "vulnerabilities"
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip("-") or "vulnerabilities"
     return f"{safe}.{extension}"
+
+
+@router.patch("/{vulnerability_id}/status", response_model=Vulnerability)
+def update_vulnerability_status(
+    vulnerability_id: str, payload: VulnerabilityStatusUpdate
+) -> Vulnerability:
+    """Mark a merged vulnerability as confirmed or ignored.
+
+    The UI shows merged report findings. Updating a merged finding therefore
+    applies the requested review state to every raw fact row that contributed to
+    that merged report item.
+    """
+    all_vulnerabilities = _query_filtered_vulnerabilities(None, None)
+    target = next((vuln for vuln in all_vulnerabilities if vuln.id == vulnerability_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Vulnerability not found")
+
+    fact_ids = target.related_fact_ids or [target.fact_id]
+    placeholders = ",".join("?" for _ in fact_ids)
+    with get_conn() as conn:
+        conn.execute(
+            f"""
+            UPDATE vulnerabilities
+            SET status = ?
+            WHERE project_id = ? AND fact_id IN ({placeholders})
+            """,
+            [payload.status, target.project_id, *fact_ids],
+        )
+
+    return target.model_copy(update={"status": payload.status})
 
 
 def _report_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
@@ -1065,6 +1123,78 @@ def _render_docx_export(vulnerabilities: list[Vulnerability]) -> bytes:
     return buffer.getvalue()
 
 
+def _describe_export_scope(vulnerabilities: list[Vulnerability], project_id: str | None) -> tuple[str, str | None, str | None]:
+    """Return a human-readable scope label plus the resolved project id/name."""
+    if len(vulnerabilities) == 1:
+        only = vulnerabilities[0]
+        return f"{only.project_name} · {only.fact_id}", only.project_id, only.project_name
+    project_ids = {item.project_id for item in vulnerabilities}
+    if project_id and len(project_ids) == 1:
+        name = vulnerabilities[0].project_name if vulnerabilities else project_id
+        return f"{name}（{len(vulnerabilities)} 条）", project_id, name
+    if len(project_ids) == 1 and vulnerabilities:
+        only_name = vulnerabilities[0].project_name
+        return f"{only_name}（{len(vulnerabilities)} 条）", vulnerabilities[0].project_id, only_name
+    return f"全部漏洞（{len(vulnerabilities)} 条）", None, None
+
+
+def _record_export(
+    vulnerabilities: list[Vulnerability],
+    *,
+    fmt: str,
+    filename: str,
+    project_id: str | None,
+    severity: str | None,
+    status: str | None,
+) -> None:
+    """Persist a single export action to the ``export_records`` table.
+
+    Best-effort: a logging failure must never break the actual download, so any
+    database error is swallowed.
+    """
+    scope, resolved_project_id, project_name = _describe_export_scope(vulnerabilities, project_id)
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO export_records
+                    (created_at, format, filename, scope, vulnerability_count,
+                     project_id, project_name, severity, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    fmt,
+                    filename,
+                    scope,
+                    len(vulnerabilities),
+                    resolved_project_id,
+                    project_name,
+                    severity,
+                    status,
+                ),
+            )
+    except Exception:  # pragma: no cover - logging must not break the download
+        pass
+
+
+@router.get("/export-records", response_model=list[ExportRecord])
+def list_export_records(limit: int = Query(default=50, ge=1, le=200)) -> list[ExportRecord]:
+    """Return the most recent export actions, newest first (导出记录 page)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, created_at, format, filename, scope, vulnerability_count,
+                   project_id, project_name, severity, status
+            FROM export_records
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [ExportRecord(**dict(row)) for row in rows]
+
+
 @router.get("/export")
 def export_vulnerabilities(
     format: str = Query(
@@ -1082,6 +1212,14 @@ def export_vulnerabilities(
     vulnerability_id: str | None = Query(
         default=None,
         description="Optional vulnerability id; restricts the export to one finding.",
+    ),
+    vulnerability_ids: str | None = Query(
+        default=None,
+        description="Comma-separated merged vulnerability ids to export.",
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Optional review status filter (confirmed or ignored).",
     ),
 ) -> Response:
     """Export vulnerabilities as a downloadable JSON or CSV file.
@@ -1104,47 +1242,64 @@ def export_vulnerabilities(
     if normalized not in ("json", "csv", "md", "markdown", "pdf", "docx", "word"):
         raise HTTPException(status_code=422, detail="Supported formats: json, csv, md, pdf, docx")
 
-    vulnerabilities = _query_filtered_vulnerabilities(severity, project_id, vulnerability_id)
+    selected_ids = [item.strip() for item in (vulnerability_ids or "").split(",") if item.strip()] or None
+    vulnerabilities = _query_filtered_vulnerabilities(
+        severity,
+        project_id,
+        vulnerability_id,
+        vulnerability_ids=selected_ids,
+        status=status,
+    )
 
     if normalized == "json":
         body = _render_json_export(vulnerabilities)
+        filename = _export_filename(vulnerabilities, "json")
+        _record_export(vulnerabilities, fmt="json", filename=filename, project_id=project_id, severity=severity, status=status)
         return Response(
             content=body,
             media_type="application/json",
             headers={
-                "Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "json")}"'
+                "Content-Disposition": f'attachment; filename="{filename}"'
             },
         )
 
     if normalized in ("md", "markdown"):
         body = _render_markdown_export(vulnerabilities)
+        filename = _export_filename(vulnerabilities, "md")
+        _record_export(vulnerabilities, fmt="md", filename=filename, project_id=project_id, severity=severity, status=status)
         return Response(
             content=body,
             media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "md")}"'},
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     if normalized == "pdf":
         body = _render_pdf_export(vulnerabilities)
+        filename = _export_filename(vulnerabilities, "pdf")
+        _record_export(vulnerabilities, fmt="pdf", filename=filename, project_id=project_id, severity=severity, status=status)
         return Response(
             content=body,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "pdf")}"'},
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     if normalized in ("docx", "word"):
         body = _render_docx_export(vulnerabilities)
+        filename = _export_filename(vulnerabilities, "docx")
+        _record_export(vulnerabilities, fmt="docx", filename=filename, project_id=project_id, severity=severity, status=status)
         return Response(
             content=body,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "docx")}"'},
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     body = _render_csv_export(vulnerabilities)
+    filename = _export_filename(vulnerabilities, "csv")
+    _record_export(vulnerabilities, fmt="csv", filename=filename, project_id=project_id, severity=severity, status=status)
     return Response(
         content=body,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{_export_filename(vulnerabilities, "csv")}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

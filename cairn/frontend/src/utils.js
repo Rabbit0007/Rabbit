@@ -54,7 +54,7 @@ export function parseHash() {
   if (parts[0] === "projects" && parts[1]) {
     return { page: "project", projectId: decodeURIComponent(parts[1]) };
   }
-  if (parts[0] === "vulnerabilities") return { page: "vulnerabilities" };
+  if (parts[0] === "vulnerabilities") return { page: "vulnerabilities", view: parts[1] ? decodeURIComponent(parts[1]) : "overview" };
   if (parts[0] === "workers") return { page: "workers" };
   if (parts[0] === "templates") return { page: "templates" };
   return { page: "projects" };
