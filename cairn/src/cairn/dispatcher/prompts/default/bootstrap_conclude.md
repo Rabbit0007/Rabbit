@@ -23,6 +23,7 @@ Normal return example:
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - Do not output `complete` in this phase. Even if Goal is not achieved or you want to explain status, put that information into `fact.description` only.
 - `fact.description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler.
+- Do not claim a vulnerability without concrete evidence such as the target, endpoint or parameter, request/response behavior, command output, or other reproducible validation result. A failed, inconclusive, speculative, or non-applicable test must be stated as unconfirmed or not exploitable, never as a confirmed vulnerability.
 - All user-facing JSON string fields, especially `fact.description`, must be written in Simplified Chinese. Keep URLs, file paths, commands, payload names, CVE IDs, ports, credentials, and other exact technical identifiers unchanged.
 - Do not put long data blobs in `fact.description`. Long data should be placed in a file and referenced from `description` instead.
 

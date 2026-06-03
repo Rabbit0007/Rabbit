@@ -20,6 +20,8 @@ Normal return example:
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this exploration instruction immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
 - `description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- Do not claim a vulnerability that is unrelated to the Current Intent or unsupported by this task's observed evidence.
+- A confirmed vulnerability conclusion must include concrete evidence such as the target, endpoint or parameter, request/response behavior, command output, or other reproducible validation result. A failed, inconclusive, speculative, or non-applicable test must be stated as unconfirmed or not exploitable, never as a confirmed vulnerability.
 - All user-facing JSON string fields, especially `description`, must be written in Simplified Chinese. Keep URLs, file paths, commands, payload names, CVE IDs, ports, credentials, and other exact technical identifiers unchanged.
 
 # Context

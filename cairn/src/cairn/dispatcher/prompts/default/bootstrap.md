@@ -20,6 +20,7 @@ Only return the following after you have confirmed that Goal has been satisfied:
 - Output `complete` only if Goal has already been definitively achieved in this session. If Goal is not yet achieved, do not output `complete`, do not summarize partial progress as completion, and keep working until a conclude-phase instruction replaces this task.
 - `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.
 - `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.
+- Do not claim a vulnerability without concrete evidence such as the target, endpoint or parameter, request/response behavior, command output, or other reproducible validation result. A failed, inconclusive, speculative, or non-applicable test must be stated as unconfirmed or not exploitable, never as a confirmed vulnerability.
 - All user-facing JSON string fields, especially `description`, must be written in Simplified Chinese. Keep URLs, file paths, commands, payload names, CVE IDs, ports, credentials, and other exact technical identifiers unchanged.
 - Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.
 

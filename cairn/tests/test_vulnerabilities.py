@@ -154,6 +154,49 @@ def test_extract_vulnerabilities_empty_for_benign_description():
     assert extract_vulnerabilities(BENIGN_DESC) == []
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        (
+            "S2-045 (CVE-2017-5638)：已测试 Content-Type header 注入检测，"
+            "未触发（不脆弱），无命令执行。"
+        ),
+        (
+            "SQL 注入测试：username 参数响应与正常请求完全一致，"
+            "无 SQL 错误回显，无响应差异，无可利用的注入迹象。"
+        ),
+        "CVE-2023-46604 可能存在，应优先尝试利用。",
+        (
+            "Ghostcat（CVE-2020-1938）攻击路径验证完成，结论：不可利用。"
+            "端口 8009 返回 HTTP 400，无法读取 /WEB-INF/web.xml。"
+        ),
+        (
+            "DSS Web 漏洞（CNVD-2017-06001 SQLi）已测试，"
+            "目标路径 /portal/attachment_downloadByUrlAtt.action 不存在，扫描未命中。"
+        ),
+        "攻击面极为有限：无表单可注入，无 API 可未授权访问，所有路径均需有效会话。",
+        "结论：HTTPS 8443 未提供任何认证绕过、未授权端点或更宽松的会话管理机制。",
+    ],
+)
+def test_extract_vulnerabilities_ignores_failed_or_speculative_findings(description):
+    """Failed, non-applicable, and speculative tests are not report findings."""
+    assert extract_vulnerabilities(description) == []
+
+
+def test_extract_vulnerabilities_keeps_confirmed_unauthorized_api():
+    """A concrete, positively validated unauthorized API remains reportable."""
+    description = (
+        "突破性发现：/config/realtime_getStatusJson.action 是未授权 JSON API，"
+        "无需认证直接返回 JSON 系统状态数据。"
+        "该端点未获取到凭证、源码或 RCE 路径。"
+    )
+
+    extracted = extract_vulnerabilities(description)
+
+    assert len(extracted) == 1
+    assert extracted[0].severity == "high"
+
+
 # ---------------------------------------------------------------------------
 # Extraction service: scan_project_facts upsert / reconcile (req 6.4, 6.5)
 # ---------------------------------------------------------------------------
@@ -237,6 +280,35 @@ def test_scan_project_facts_removes_stale_vulnerabilities(temp_db):
         )
 
     scan_project_facts("p1")
+    assert _count_vulns("p1") == 0
+
+
+def test_scan_project_facts_ignores_bare_unsupported_claim(temp_db):
+    """A one-line vulnerability claim without reproducible evidence is skipped."""
+    _insert_project("p1", "Project One")
+    _insert_fact("f1", "p1", "确认存在 SQL 注入漏洞。")
+
+    assert scan_project_facts("p1") == 0
+    assert _count_vulns("p1") == 0
+
+
+def test_scan_project_facts_removes_explicitly_corrected_fact(temp_db):
+    """Later append-only facts can explicitly retract an earlier false finding."""
+    _insert_project("p1", "Project One")
+    _insert_fact(
+        "f1",
+        "p1",
+        "确认存在 Ghostcat CVE-2020-1938 本地文件包含漏洞，"
+        "目标端口 8009 可读取 /WEB-INF/web.xml。",
+    )
+    _insert_fact(
+        "f2",
+        "p1",
+        "修正此前事实 f1 中的错误结论：端口 8009 为 HTTP Connector，"
+        "Ghostcat CVE-2020-1938 不可利用。",
+    )
+
+    assert scan_project_facts("p1") == 0
     assert _count_vulns("p1") == 0
 
 
@@ -373,7 +445,7 @@ def test_list_ordered_most_severe_first(client, populated):
 
 
 def test_list_merges_same_cve_and_keeps_final_confirmation(client, temp_db):
-    """Report output merges repeated findings for the same project/CVE."""
+    """Report output excludes an unconfirmed earlier attempt for the same CVE."""
     _insert_project("p1", "JBoss Test")
     _insert_fact(
         "f002",
@@ -397,10 +469,68 @@ def test_list_merges_same_cve_and_keeps_final_confirmation(client, temp_db):
     body = resp.json()
     assert len(body) == 1
     assert body[0]["fact_id"] == "f014"
-    assert body[0]["related_fact_ids"] == ["f002", "f014"]
-    assert "最终确认事实为 f014" in body[0]["description"]
-    assert "POST /invoker/readonly HTTP/1.1" in body[0]["proof_packets"][0]["request"]
-    assert "uid=0(root)" in body[0]["proof_packets"][0]["response"]
+    assert body[0]["related_fact_ids"] == ["f014"]
+    assert "最终确认事实为 f014" not in body[0]["description"]
+    packet = body[0]["proof_packets"][0]
+    assert "/invoker/readonly" in packet["request"]
+    assert "Host: 127.0.0.1:60001" in packet["request"]
+    assert "uid=0" not in packet["request"]
+    assert "依据当前项目 p1" in packet["note"]
+
+
+def test_proof_packet_reconstructs_sql_request_from_same_project_fact(client, temp_db):
+    """SQL proof uses the recorded endpoint instead of a fixed lab template."""
+    _insert_project("p1", "SQL Test")
+    _insert_fact(
+        "origin",
+        "p1",
+        "http://10.20.30.40/",
+    )
+    _insert_fact(
+        "f001",
+        "p1",
+        "确认存在 SQL 注入漏洞：GET /app/item?id=1 请求中，"
+        "id=1' UNION SELECT version(),user()--+ 可回显 MySQL 版本和 root@localhost 用户。",
+    )
+    scan_project_facts("p1")
+
+    resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
+
+    assert resp.status_code == 200
+    packet = resp.json()[0]["proof_packets"][0]
+    assert "GET /app/item?id=1" in packet["request"]
+    assert "Host: 10.20.30.40" in packet["request"]
+    assert "/sqli-labs/" not in packet["request"]
+    assert "p1" in packet["note"]
+
+
+def test_proof_packets_keep_parameters_scoped_to_each_endpoint(client, temp_db):
+    """One fact's parameters are not copied onto a different endpoint."""
+    _insert_project("p1", "API Test")
+    _insert_fact("origin", "p1", "http://10.20.30.40/")
+    _insert_fact(
+        "f001",
+        "p1",
+        "发现两个未授权 JSON API：\n"
+        "- /config/realtime_getStatusJson.action 接受 POST 请求，"
+        "statusName=systemDiskStatus 无需认证直接返回 JSON 系统状态数据。\n"
+        "- /config/realtime_loginKeeper.action 使用 GET/POST 均返回 true，无需认证。",
+    )
+    scan_project_facts("p1")
+
+    resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
+
+    assert resp.status_code == 200
+    packets = resp.json()[0]["proof_packets"]
+    requests = {packet["title"]: packet["request"] for packet in packets}
+    status_request = next(
+        request for title, request in requests.items() if "getStatusJson" in title
+    )
+    keeper_request = next(
+        request for title, request in requests.items() if "loginKeeper" in title
+    )
+    assert "statusName=systemDiskStatus" in status_request
+    assert "statusName=systemDiskStatus" not in keeper_request
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +688,7 @@ def test_export_markdown_content_and_scope(client, populated):
     assert "## 报告概览" in text
     assert "## 漏洞清单" in text
     assert "## 项目：Alpha（`p1`）" in text
-    assert "```http" in text
-    assert "```text" in text
+    assert "未记录真实请求/响应数据包。" in text
     assert "Beta" not in text
 
 

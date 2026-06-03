@@ -19,6 +19,7 @@ import io
 import json
 import re
 import zipfile
+from urllib.parse import urlsplit
 from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, HTTPException, Query
@@ -116,11 +117,11 @@ def _fact_rank(fact_id: str | None) -> int:
 
 
 def _all_report_text(vulns: list[Vulnerability]) -> str:
+    """Join only reportable text from one project/vulnerability group."""
     parts: list[str] = []
     for vuln in vulns:
         parts.extend([vuln.title, vuln.description, *vuln.evidence])
-        parts.extend(str(item.get("description", "")) for item in vuln.process)
-    return "\n".join(parts)
+    return "\n".join(_unique(parts))
 
 
 def _vulnerability_signature(vuln: Vulnerability) -> str:
@@ -170,70 +171,349 @@ def _merge_process(vulns: list[Vulnerability]) -> list[dict[str, str]]:
     return merged
 
 
-def _target_host_from_text(text: str) -> str:
-    match = re.search(r"https?://([^/\s,;]+)", text)
-    return match.group(1) if match else "目标主机"
+_FILESYSTEM_PATH_PREFIXES = (
+    "/bin/",
+    "/dev/",
+    "/etc/",
+    "/home/",
+    "/opt/",
+    "/proc/",
+    "/root/",
+    "/tmp/",
+    "/usr/",
+    "/var/",
+)
+
+
+def _project_origin(project_id: str) -> str:
+    """Return the origin fact for exactly one project, when available."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT description FROM facts WHERE project_id = ? AND id = 'origin'",
+            (project_id,),
+        ).fetchone()
+    return str(row["description"] or "").strip() if row else ""
+
+
+def _project_fact_text(vulns: list[Vulnerability]) -> str:
+    """Load raw descriptions only for the selected project's finding facts."""
+    if not vulns:
+        return ""
+    project_id = vulns[0].project_id
+    fact_ids = _unique(
+        [vuln.fact_id for vuln in vulns if vuln.project_id == project_id]
+    )
+    if not fact_ids:
+        return ""
+    placeholders = ",".join("?" for _ in fact_ids)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT description FROM facts "
+            f"WHERE project_id = ? AND id IN ({placeholders}) ORDER BY id",
+            (project_id, *fact_ids),
+        ).fetchall()
+    return "\n".join(str(row["description"] or "") for row in rows)
+
+
+def _clean_endpoint(value: str) -> str:
+    endpoint = value.strip("`'\"*()[]{}<>，。；;：:")
+    if not endpoint.startswith("/") or endpoint.startswith("//"):
+        return ""
+    if endpoint.lower().startswith(_FILESYSTEM_PATH_PREFIXES):
+        return ""
+    return endpoint
+
+
+def _local_context(text: str, start: int, end: int) -> str:
+    """Return the bullet/sentence that contains a candidate endpoint."""
+    line_left = text.rfind("\n", 0, start)
+    line_right = text.find("\n", end)
+    if line_left >= 0 or line_right >= 0:
+        line_right = line_right if line_right >= 0 else len(text)
+        line = text[line_left + 1 : line_right].strip()
+        if line:
+            if line.startswith("-") and line_left > 0:
+                preceding = text[:line_left].splitlines()
+                for previous in reversed(preceding[-6:]):
+                    previous = previous.strip()
+                    if not previous:
+                        continue
+                    if previous.startswith("-"):
+                        continue
+                    if re.search(
+                        r"未授权|漏洞|泄露|发现|确认|攻击面",
+                        previous,
+                        re.IGNORECASE,
+                    ):
+                        return previous + "\n" + line
+                    break
+            return line
+
+    left = max(text.rfind("。", 0, start), text.rfind("；", 0, start))
+    right_candidates = [
+        position
+        for position in (
+            text.find("\n", end),
+            text.find("。", end),
+            text.find("；", end),
+        )
+        if position >= 0
+    ]
+    right = min(right_candidates) if right_candidates else len(text)
+    return text[left + 1 : right].strip()
+
+
+def _endpoint_candidates(text: str) -> list[tuple[str, int, str]]:
+    """Extract and score HTTP endpoint candidates from report facts."""
+    candidates: dict[str, tuple[int, str]] = {}
+    patterns = (
+        r"https?://[^\s`'\"<>，。；;）)]+",
+        r"(?<![\w./:])/(?!/)[A-Za-z0-9._~!$&'()*+,;=:@%/?#\[\]-]+",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            raw = match.group(0)
+            if raw.lower().startswith(("http://", "https://")):
+                parsed = urlsplit(raw)
+                raw = parsed.path or "/"
+                if parsed.query:
+                    raw += "?" + parsed.query
+            endpoint = _clean_endpoint(raw)
+            if not endpoint:
+                continue
+            context = _local_context(text, match.start(), match.end())
+            if re.search(
+                rf"rtsp://[^\s`'\"<>，。；;）)]*{re.escape(endpoint)}",
+                context,
+                re.IGNORECASE,
+            ):
+                continue
+            score = 5
+            for positive, weight in (
+                (
+                    r"无需认证|未授权|直接返回|回显|成功|已确认|漏洞|泄露|"
+                    r"枚举|错误响应不同|密码提示",
+                    30,
+                ),
+                (r"\b(?:GET|POST|PUT|PATCH|DELETE)\b|请求|响应|状态码|JSON", 16),
+                (r"返回\s*(?:HTTP\s*)?2\d\d|\b2\d\d\s+OK\b", 12),
+            ):
+                if re.search(positive, context, re.IGNORECASE):
+                    score += weight
+            for negative, weight in (
+                (
+                    r"404|不存在|失败|不可利用|未发现|无法|未能|错误结论|"
+                    r"修正|未被使用|不参与",
+                    35,
+                ),
+                (
+                    r"需认证|需要认证|受保护|重定向至登录|未授权访问.*未|"
+                    r"为空|需特定",
+                    24,
+                ),
+            ):
+                if re.search(negative, context, re.IGNORECASE):
+                    score -= weight
+            if endpoint.endswith((".action", ".jsp", ".php", ".json")):
+                score += 8
+            previous = candidates.get(endpoint)
+            if previous is None or score > previous[0]:
+                candidates[endpoint] = (score, context)
+    return sorted(
+        ((endpoint, score, context) for endpoint, (score, context) in candidates.items()),
+        key=lambda item: (-item[1], -len(item[0]), item[0]),
+    )
+
+
+def _target_host(project_id: str, text: str, endpoint: str, context: str) -> str:
+    """Resolve a host only from the current group's text or project origin."""
+    urls = re.findall(r"https?://[^\s`'\"<>，。；;）)]+", text, re.IGNORECASE)
+    matching = [url for url in urls if endpoint and endpoint.split("?", 1)[0] in url]
+    for raw in [*matching, *urls, _project_origin(project_id)]:
+        if not raw:
+            continue
+        parsed = urlsplit(raw)
+        if parsed.netloc:
+            host = parsed.netloc
+            if ":" not in host:
+                port_match = re.search(
+                    r"(?:^|[^\d])(\d{2,5})\s+(?:DStatus|SS|HTTP|HTTPS|Web|API)",
+                    context,
+                    re.IGNORECASE,
+                )
+                if port_match:
+                    host += ":" + port_match.group(1)
+            return host
+    return "<项目事实未记录目标主机>"
+
+
+def _request_method(context: str, endpoint: str) -> str:
+    escaped = re.escape(endpoint.split("?", 1)[0])
+    for pattern in (
+        rf"\b(GET|POST|PUT|PATCH|DELETE)\b[^。\n]{{0,100}}{escaped}",
+        rf"{escaped}[^。\n]{{0,100}}\b(GET|POST|PUT|PATCH|DELETE)\b",
+        r"\b(GET|POST|PUT|PATCH|DELETE)\s+请求\b",
+    ):
+        match = re.search(pattern, context, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    return "GET"
+
+
+def _request_parameters(context: str) -> list[tuple[str, str]]:
+    """Extract concrete name=value examples close to the selected endpoint."""
+    params: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r"(?<![\w.-])([A-Za-z_][\w.\[\]-]*)=([^&\s`，。,；;）)]+)",
+        context,
+    ):
+        name, value = match.group(1), match.group(2).strip("'\"")
+        if name.lower() in {"http", "https", "uid", "gid", "euid"} or name in seen:
+            continue
+        seen.add(name)
+        params.append((name, value))
+        if len(params) >= 6:
+            break
+    return params
+
+
+def _response_body(context: str) -> str:
+    """Extract an exact response example when the fact recorded one."""
+    json_match = re.search(r"\{[^{}\n]{2,800}\}", context)
+    if json_match:
+        return json_match.group(0)
+    for pattern in (
+        r"返回\s*[`'\"“]([^`'\"”\n]{1,500})[`'\"”]",
+        r"响应(?:为|内容为|回显)?\s*[`'\"“]([^`'\"”\n]{1,500})[`'\"”]",
+        r"→\s*(\[[^\]\n]{1,500}\])",
+    ):
+        match = re.search(pattern, context, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    behavior = re.search(
+        r"[^。\n]{0,120}(?:无需认证|未授权|直接返回|回显|泄露|枚举)[^。\n]{0,220}",
+        context,
+        re.IGNORECASE,
+    )
+    if behavior:
+        return f"<事实仅记录响应行为：{behavior.group(0).strip()}>"
+    return "<事实未记录原始响应体，需复测补充>"
+
+
+def _reconstructed_http_packets(vulns: list[Vulnerability]) -> list[dict[str, str]]:
+    """Build reproducible HTTP proofs from same-project confirmed facts."""
+    if not vulns:
+        return []
+    project_id = vulns[0].project_id
+    scoped = [vuln for vuln in vulns if vuln.project_id == project_id]
+    raw_fact_text = _project_fact_text(scoped)
+    report_text = _all_report_text(scoped)
+    text = "\n".join(part for part in (report_text, raw_fact_text) if part)
+    candidate_text = raw_fact_text or report_text
+    candidates = [
+        candidate for candidate in _endpoint_candidates(candidate_text) if candidate[1] > 0
+    ]
+    if not candidates:
+        return []
+    top_score = candidates[0][1]
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate[1] >= max(5, top_score - 12)
+    ]
+    candidates = [
+        candidate
+        for candidate in candidates
+        if not (
+            candidate[0].endswith("/")
+            and any(
+                other[0] != candidate[0]
+                and other[0].startswith(candidate[0])
+                and other[1] >= candidate[1]
+                for other in candidates
+            )
+        )
+    ]
+    fact_ids = ", ".join(_unique([vuln.fact_id for vuln in scoped]))
+    packets: list[dict[str, str]] = []
+    for endpoint, _score, context in candidates[:3]:
+        params = _request_parameters(context)
+        if (
+            not params
+            and "login" in endpoint.lower()
+            and re.search(
+                r"用户名|密码|登录接口|认证错误|loginName|loginSecretKey",
+                context,
+                re.IGNORECASE,
+            )
+        ):
+            params = _request_parameters(raw_fact_text)
+        method = _request_method(context, endpoint)
+        if method == "GET" and params and "login" in endpoint.lower():
+            method = "POST"
+
+        request_target = endpoint
+        body = ""
+        if params:
+            encoded = "&".join(f"{name}={value}" for name, value in params)
+            if method == "GET" and "?" not in request_target:
+                request_target += "?" + encoded
+            elif method != "GET":
+                body = encoded
+        elif method != "GET":
+            body = "<根据事实补充请求参数或载荷>"
+
+        host = _target_host(project_id, text, endpoint, context)
+        request_lines = [
+            f"{method} {request_target} HTTP/1.1",
+            f"Host: {host}",
+            "Accept: application/json, text/plain, */*",
+            "Connection: close",
+        ]
+        if body:
+            request_lines.extend(
+                [
+                    "Content-Type: application/x-www-form-urlencoded",
+                    f"Content-Length: {len(body.encode('utf-8'))}",
+                    "",
+                    body,
+                ]
+            )
+
+        status_match = re.search(
+            r"(?:返回|HTTP(?:/\d(?:\.\d)?)?\s*)\s*(\d{3})(?:\s+OK)?",
+            context,
+            re.IGNORECASE,
+        )
+        status = status_match.group(1) if status_match else "<事实未记录状态码>"
+        response_body = _response_body(context)
+        content_type = (
+            "application/json"
+            if "json" in context.lower() or response_body.startswith(("{", "["))
+            else "text/plain"
+        )
+        packets.append(
+            {
+                "title": f"{endpoint.split('?', 1)[0]} 漏洞证明（依据事实重构）",
+                "request": "\n".join(request_lines),
+                "response": (
+                    f"HTTP/1.1 {status}\n"
+                    f"Content-Type: {content_type}\n\n"
+                    f"{response_body}"
+                ),
+                "note": (
+                    f"该数据包仅依据当前项目 {project_id} 的确认事实 {fact_ids} 重构，"
+                    "不是原始抓包。事实未记录的字段使用占位符，复测时应以真实请求和响应替换。"
+                ),
+            }
+        )
+    return packets
 
 
 def _proof_packets(vulns: list[Vulnerability]) -> list[dict[str, str]]:
-    text = _all_report_text(vulns)
-    host = _target_host_from_text(text)
-    packets: list[dict[str, str]] = []
-
-    if re.search(r"sql 注入|sql injection|sqli", text, re.IGNORECASE):
-        packets.append(
-            {
-                "title": "SQL 注入验证请求（重构）",
-                "request": (
-                    "GET /sqli-labs/Less-1/?id=1%27%20UNION%20SELECT%201,version(),user()--+ HTTP/1.1\n"
-                    f"Host: {host}\n"
-                    "Accept: text/html,*/*\n"
-                    "Connection: close"
-                ),
-                "response": "页面回显数据库版本、当前用户或 flag/敏感结果；报告证据中包含 MySQL 版本、root@localhost/FILE 权限或已提取 flag。",
-                "note": "该数据包为根据探索事实重构的漏洞证明请求，保留关键参数和验证思路。",
-            }
-        )
-
-    if re.search(r"jboss|/invoker|ysoserial|反序列化|cve-2017-12149|cve-2007-1036", text, re.IGNORECASE):
-        endpoint = "/invoker/readonly" if "/invoker/readonly" in text else "/invoker/JMXInvokerServlet"
-        payloads: list[str] = []
-        if "CommonsCollections" in text:
-            payloads.append("CommonsCollections6/7")
-        payloads.extend(
-            name
-            for name in ("CommonsCollections6", "CommonsCollections7", "JBossInterceptors1", "JavassistWeld1")
-            if name in text and name not in payloads
-        )
-        payload = payloads[0] if payloads else "ysoserial payload"
-        command = "whoami; id" if re.search(r"uid=0|root", text, re.I) else "whoami"
-        proof_lines: list[str] = []
-        if re.search(r"whoami(?:\s+output)?[:：]?\s*root", text, re.I) or "whoami 作为命令执行证明" in text:
-            proof_lines.append("whoami output: root")
-        uid = re.search(r"uid=0\([^)]*\)", text, re.I)
-        if uid:
-            proof_lines.append(f"id output: {uid.group(0)}")
-        elif re.search(r"uid=0|root\s*权限", text, re.I):
-            proof_lines.append("id output: uid=0(root)")
-        if "HTTP 500" in text:
-            proof_lines.append("反序列化端点探测响应：HTTP 500，符合 JBoss invoker 反序列化入口特征")
-        packets.append(
-            {
-                "title": "JBoss 反序列化命令执行请求（重构）",
-                "request": (
-                    f"POST {endpoint} HTTP/1.1\n"
-                    f"Host: {host}\n"
-                    "Content-Type: application/x-java-serialized-object\n"
-                    "Connection: close\n\n"
-                    f"<ysoserial {payload} \"{command}\" 生成的 Java 序列化载荷>"
-                ),
-                "response": "\n".join(proof_lines)
-                or "命令执行证明来自回调或命令回显；若最终事实已确认，证据包含 whoami=root、id=uid=0(root) 或目标服务器权限获取结果。",
-                "note": "这里展示的是报告级证明数据包：原始二进制序列化体不直接展开，但保留了方法、端点、Content-Type、载荷类型和命令证明。",
-            }
-        )
-
-    return packets
+    """Reconstruct proof packets from same-project facts without fixed payloads."""
+    return _reconstructed_http_packets(vulns)
 
 
 def _evidence_score(text: str) -> int:
@@ -652,7 +932,10 @@ def _render_markdown_export(vulnerabilities: list[Vulnerability]) -> str:
             lines.append("")
 
             lines.extend(["#### 漏洞证明数据包", ""])
-            for packet_index, packet in enumerate(vuln.proof_packets or [], start=1):
+            packets = vuln.proof_packets or []
+            if not packets:
+                lines.extend(["未记录真实请求/响应数据包。", ""])
+            for packet_index, packet in enumerate(packets, start=1):
                 lines.extend(
                     [
                         f"**证明 {packet_index}：{packet.get('title') or '漏洞证明'}**",
@@ -801,6 +1084,8 @@ def _report_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
                 note = packet.get("note")
                 if note:
                     lines.append(f"说明：{note}")
+        else:
+            lines.extend(["漏洞证明数据包：", "未记录真实请求/响应数据包。"])
         if vuln.process:
             lines.append("漏洞浮现过程：")
             for step_index, step in enumerate(vuln.process, start=1):
@@ -850,7 +1135,10 @@ def _report_plain_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
             for evidence in vuln.evidence or ["未记录"]:
                 lines.append(f"- {evidence}")
             lines.append("漏洞证明数据包：")
-            for packet_index, packet in enumerate(vuln.proof_packets or [], start=1):
+            packets = vuln.proof_packets or []
+            if not packets:
+                lines.append("未记录真实请求/响应数据包。")
+            for packet_index, packet in enumerate(packets, start=1):
                 lines.extend(
                     [
                         f"证明 {packet_index}：{packet.get('title') or '漏洞证明'}",
@@ -1065,7 +1353,10 @@ def _render_docx_export(vulnerabilities: list[Vulnerability]) -> bytes:
             )
             body.append(_docx_table([["证据"]] + [[item] for item in (vuln.evidence or ["未记录"])], header=True))
             body.append(_docx_paragraph("漏洞证明数据包", style="Heading3"))
-            for packet_index, packet in enumerate(vuln.proof_packets or [], start=1):
+            packets = vuln.proof_packets or []
+            if not packets:
+                body.append(_docx_paragraph("未记录真实请求/响应数据包。"))
+            for packet_index, packet in enumerate(packets, start=1):
                 body.append(_docx_paragraph(f"证明 {packet_index}：{packet.get('title') or '漏洞证明'}", style="Heading4"))
                 body.append(_docx_table([["请求数据包", "响应/回显"], [packet.get("request") or "未记录", packet.get("response") or "未记录"]], header=True))
                 if packet.get("note"):
