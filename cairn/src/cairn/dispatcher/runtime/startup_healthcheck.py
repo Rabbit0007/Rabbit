@@ -131,14 +131,17 @@ def _run_worker_healthcheck(
     )
     result = healthcheck.result
     http_status, response_preview = _parse_stdout(result.stdout)
+    healthcheck_error = driver.healthcheck_error(result.returncode, result.stdout, result.stderr)
+    if healthcheck_error is not None:
+        response_preview = _preview(healthcheck_error)
     return StartupHealthcheckResult(
         worker_name=worker.name,
-        ok=result.returncode == 0,
+        ok=healthcheck_error is None,
         returncode=result.returncode,
         duration_ms=healthcheck.duration_ms,
         http_status=http_status,
         response_preview=response_preview,
-        stderr_preview=_preview(result.stderr),
+        stderr_preview=_preview(healthcheck_error or result.stderr),
         command=driver.describe_startup_healthcheck(worker),
     )
 

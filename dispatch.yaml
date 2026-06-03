@@ -27,7 +27,7 @@ common_env:
 workers:
 - name: claudecode_deepseek-v4-pro
   type: claudecode
-  enabled: true
+  enabled: false
   task_types:
   - bootstrap
   - reason
@@ -42,7 +42,7 @@ workers:
     ANTHROPIC_AUTH_TOKEN: sk-6fe8e73dc03247a4a6a102353bd9a009
 - name: claudecode_deepseek-v4-pro-2
   type: claudecode
-  enabled: true
+  enabled: false
   task_types:
   - bootstrap
   - reason
@@ -57,7 +57,7 @@ workers:
     ANTHROPIC_AUTH_TOKEN: sk-6fe8e73dc03247a4a6a102353bd9a009
 - name: claudecode_deepseek-v4-pro-3
   type: claudecode
-  enabled: true
+  enabled: false
   task_types:
   - bootstrap
   - reason
@@ -72,7 +72,7 @@ workers:
     ANTHROPIC_AUTH_TOKEN: sk-6fe8e73dc03247a4a6a102353bd9a009
 - name: worker_deepseekv4_local
   type: pi
-  enabled: false
+  enabled: true
   task_types:
   - bootstrap
   - reason
@@ -85,10 +85,10 @@ workers:
     PI_MODEL: deepseekv4
     PI_BASE_URL: http://10.2.8.77:3000/v1
     PI_API_KEY: sk-c8I3u5nHDsQpnMsT737071E106E34076A9B9140964Ac13B1
-    PI_PROVIDER_API: openai
+    PI_PROVIDER_API: openai-completions
 - name: worker_deepseekv4_local-2
   type: pi
-  enabled: false
+  enabled: true
   task_types:
   - bootstrap
   - reason
@@ -101,10 +101,10 @@ workers:
     PI_MODEL: deepseekv4
     PI_BASE_URL: http://10.2.8.77:3000/v1
     PI_API_KEY: sk-c8I3u5nHDsQpnMsT737071E106E34076A9B9140964Ac13B1
-    PI_PROVIDER_API: openai
+    PI_PROVIDER_API: openai-completions
 - name: worker_deepseekv4_local-3
   type: pi
-  enabled: false
+  enabled: true
   task_types:
   - bootstrap
   - reason
@@ -117,4 +117,4 @@ workers:
     PI_MODEL: deepseekv4
     PI_BASE_URL: http://10.2.8.77:3000/v1
     PI_API_KEY: sk-c8I3u5nHDsQpnMsT737071E106E34076A9B9140964Ac13B1
-    PI_PROVIDER_API: openai
+    PI_PROVIDER_API: openai-completions

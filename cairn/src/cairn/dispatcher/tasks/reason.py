@@ -79,13 +79,18 @@ def run_reason_task(
                 lease.failure.status_code,
             )
             return "failed"
-        if healthcheck.result.returncode != 0:
+        healthcheck_error = driver.healthcheck_error(
+            healthcheck.result.returncode,
+            healthcheck.result.stdout,
+            healthcheck.result.stderr,
+        )
+        if healthcheck_error is not None:
             LOG.warning(
-                "worker unhealthy project=%s worker=%s healthcheck_ms=%s stderr=%s",
+                "worker unhealthy project=%s worker=%s healthcheck_ms=%s error=%s",
                 project.project.id,
                 worker.name,
                 healthcheck.duration_ms,
-                preview(healthcheck.result.stderr),
+                preview(healthcheck_error),
             )
             return "unhealthy"
         open_intents = [

@@ -3429,7 +3429,7 @@ function defaultWorkerDraft(existingWorkers) {
       PI_MODEL: "",
       PI_BASE_URL: "",
       PI_API_KEY: "",
-      PI_PROVIDER_API: "openai-chat-completions",
+      PI_PROVIDER_API: "openai-completions",
     },
     secret_env_keys: ["PI_API_KEY"],
   };
@@ -3455,9 +3455,9 @@ const WORKER_PRESETS = [
     type: "pi",
     env: {
       PI_MODEL: "deepseekv4",
-      PI_BASE_URL: "http://10.2.8.77:3000/v1/chat/completions",
+      PI_BASE_URL: "http://10.2.8.77:3000/v1",
       PI_API_KEY: "",
-      PI_PROVIDER_API: "openai-chat-completions",
+      PI_PROVIDER_API: "openai-completions",
     },
   },
   {

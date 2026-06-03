@@ -82,14 +82,19 @@ def run_explore_task(
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "failed"
-        if healthcheck.result.returncode != 0:
+        healthcheck_error = driver.healthcheck_error(
+            healthcheck.result.returncode,
+            healthcheck.result.stdout,
+            healthcheck.result.stderr,
+        )
+        if healthcheck_error is not None:
             LOG.warning(
-                "worker unhealthy project=%s intent=%s worker=%s healthcheck_ms=%s stderr=%s",
+                "worker unhealthy project=%s intent=%s worker=%s healthcheck_ms=%s error=%s",
                 project.project.id,
                 intent.id,
                 worker.name,
                 healthcheck.duration_ms,
-                preview(healthcheck.result.stderr),
+                preview(healthcheck_error),
             )
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "unhealthy"
