@@ -23,6 +23,8 @@ class ContainerManager:
 
     def __init__(self, config: ContainerConfig):
         self._config = config
+        self._prefix = config.name_prefix
+        self._startup_prefix = config.startup_name_prefix
         self._client = docker.from_env()
         self._ensure_running_locks: dict[str, threading.Lock] = {}
         self._ensure_running_locks_guard = threading.Lock()
@@ -32,7 +34,7 @@ class ContainerManager:
 
     def container_name(self, project_id: str) -> str:
         sanitized = project_id.replace("/", "-")
-        return f"{self._PREFIX}{sanitized}"
+        return f"{self._prefix}{sanitized}"
 
     def ensure_running(self, project_id: str) -> str:
         name = self.container_name(project_id)
@@ -82,7 +84,7 @@ class ContainerManager:
             return lock
 
     def create_startup_container(self) -> str:
-        name = f"{self._STARTUP_PREFIX}{uuid.uuid4().hex[:12]}"
+        name = f"{self._startup_prefix}{uuid.uuid4().hex[:12]}"
         LOG.debug("creating startup healthcheck container container=%s image=%s", name, self._config.image)
         try:
             self._client.containers.run(
@@ -173,7 +175,7 @@ class ContainerManager:
         except DockerException as exc:
             LOG.warning("failed to list managed containers error=%s", exc)
             return []
-        return sorted(container.name for container in containers if container.name.startswith(self._PREFIX))
+        return sorted(container.name for container in containers if container.name.startswith(self._prefix))
 
     def needs_completed_cleanup(self, project_id: str) -> bool:
         name = self.container_name(project_id)

@@ -156,7 +156,20 @@ class ContainerConfig(BaseModel):
     image: str
     network_mode: str
     completed_action: CompletedAction
+    name_prefix: str = "cairn-dispatch-"
+    startup_name_prefix: str = "cairn-startup-healthcheck-"
+    artifact_volume: str | None = None
+    artifact_host_path: str | None = None
+    artifact_mount_path: str = "/audit-data"
     cap_add: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_container_names(self) -> "ContainerConfig":
+        if not self.name_prefix.strip():
+            raise ValueError("name_prefix must not be empty")
+        if not self.startup_name_prefix.strip():
+            raise ValueError("startup_name_prefix must not be empty")
+        return self
 
 
 class RuntimeConfig(BaseModel):

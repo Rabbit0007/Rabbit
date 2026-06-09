@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 
 from fastapi.testclient import TestClient
+import yaml
 
 from cairn.dispatcher.config import DispatchConfig
 from cairn.dispatcher.internal_api import SECRET_MASK, _write_dispatch_config, create_internal_app
@@ -144,6 +145,63 @@ def test_internal_worker_config_preserves_masked_secret_on_update(tmp_path):
     assert worker.env["ANTHROPIC_AUTH_TOKEN"] == "secret-token"
     assert "removed" not in loop.worker_unhealthy_until
     assert loop.worker_rejected_until == {}
+
+
+def test_internal_worker_config_update_preserves_container_isolation(tmp_path):
+    config = _config(
+        [
+            {
+                "name": "mock-1",
+                "type": "mock",
+                "enabled": True,
+                "task_types": ["bootstrap"],
+                "max_running": 1,
+                "priority": 0,
+                "env": {},
+            }
+        ]
+    )
+    config = config.model_copy(
+        update={
+            "server": "http://rabbit-pentest-server:8000",
+            "container": config.container.model_copy(
+                update={
+                    "network_mode": "rabbit-pentest-net",
+                    "name_prefix": "rabbit-pentest-dispatch-",
+                    "startup_name_prefix": "rabbit-pentest-startup-healthcheck-",
+                }
+            ),
+        }
+    )
+    client, loop = _client(tmp_path, config)
+
+    response = client.put(
+        "/internal/workers/config",
+        json={
+            "workers": [
+                {
+                    "name": "mock-2",
+                    "type": "mock",
+                    "enabled": True,
+                    "task_types": ["bootstrap"],
+                    "max_running": 1,
+                    "priority": 0,
+                    "env": {},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert loop.config.server == "http://rabbit-pentest-server:8000"
+    assert loop.config.container.network_mode == "rabbit-pentest-net"
+    assert loop.config.container.name_prefix == "rabbit-pentest-dispatch-"
+    assert loop.config.container.startup_name_prefix == "rabbit-pentest-startup-healthcheck-"
+    saved = yaml.safe_load((tmp_path / "dispatch.yaml").read_text(encoding="utf-8"))
+    assert saved["server"] == "http://rabbit-pentest-server:8000"
+    assert saved["container"]["network_mode"] == "rabbit-pentest-net"
+    assert saved["container"]["name_prefix"] == "rabbit-pentest-dispatch-"
+    assert saved["container"]["startup_name_prefix"] == "rabbit-pentest-startup-healthcheck-"
 
 
 def test_internal_worker_config_validation_failure_does_not_apply(tmp_path):

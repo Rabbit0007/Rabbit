@@ -1,18 +1,22 @@
-name: cairn-021
+name: rabbit-pentest
+
+networks:
+  default:
+    name: rabbit-pentest-net
 
 services:
-  cairn-server:
+  pentest-server:
     build:
       context: .
       dockerfile: Dockerfile
-    image: cairn-app
-    container_name: cairn-server
+    image: rabbit-pentest-app:latest
+    container_name: rabbit-pentest-server
     ports:
       - "8000:8000"
     volumes:
       - ./datas/cairn/:/root/.local/share/cairn/
     environment:
-      CAIRN_DISPATCHER_INTERNAL_URL: "http://cairn-dispatcher:8989"
+      CAIRN_DISPATCHER_INTERNAL_URL: "http://rabbit-pentest-dispatcher:8989"
       # Timeout (seconds) for the longer-running worker connectivity test and
       # config read/write proxy calls to the dispatcher internal API. Independent
       # of CAIRN_DISPATCHER_INTERNAL_TIMEOUT (status polling, default 2.0s).
@@ -30,21 +34,25 @@ services:
       start_period: 3s
     restart: unless-stopped
     command: ["uv", "run", "cairn", "serve", "--host", "0.0.0.0", "--no-access-log"]
-  cairn-dispatcher:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: cairn-app
-    container_name: cairn-dispatcher
+  pentest-dispatcher:
+    image: rabbit-pentest-app:latest
+    pull_policy: never
+    container_name: rabbit-pentest-dispatcher
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dispatch.yaml:/cairn/dispatch.yaml
+      - rabbit-pentest-artifacts:/audit-data
     environment:
       CAIRN_DISPATCHER_INTERNAL_API: "1"
       CAIRN_DISPATCHER_INTERNAL_HOST: "0.0.0.0"
       CAIRN_DISPATCHER_INTERNAL_PORT: "8989"
     depends_on:
-      cairn-server:
+      pentest-server:
         condition: service_healthy
     restart: unless-stopped
     command: ["uv", "run", "cairn", "dispatch", "--config", "dispatch.yaml"]
+
+volumes:
+  rabbit-pentest-artifacts:
+    external: true
+    name: rabbit-pentest-artifacts

@@ -533,6 +533,46 @@ def test_proof_packets_keep_parameters_scoped_to_each_endpoint(client, temp_db):
     assert "statusName=systemDiskStatus" not in keeper_request
 
 
+def test_batch_status_update_marks_multiple_merged_vulnerabilities(client, temp_db):
+    _insert_project("p1", "Project One")
+    _insert_fact("f1", "p1", CRITICAL_DESC)
+    _insert_fact("f2", "p1", HIGH_DESC)
+    scan_project_facts("p1")
+
+    listed = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()
+    ids = [item["id"] for item in listed]
+
+    resp = client.post("/api/vulnerabilities/batch/status", json={"ids": ids, "status": "ignored"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 2
+    assert body["status"] == "ignored"
+    refreshed = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()
+    assert {item["status"] for item in refreshed} == {"ignored"}
+
+
+def test_batch_status_update_reports_missing_ids_but_updates_existing(client, temp_db):
+    _insert_project("p1", "Project One")
+    _insert_fact("f1", "p1", CRITICAL_DESC)
+    scan_project_facts("p1")
+
+    listed = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()
+    vuln_id = listed[0]["id"]
+
+    resp = client.post(
+        "/api/vulnerabilities/batch/status",
+        json={"ids": [vuln_id, "missing-id"], "status": "ignored"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["missing_ids"] == ["missing-id"]
+    refreshed = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()
+    assert refreshed[0]["status"] == "ignored"
+
+
 # ---------------------------------------------------------------------------
 # Summary endpoint (requirements 6.3, 6.7)
 # ---------------------------------------------------------------------------

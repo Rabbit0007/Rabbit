@@ -427,6 +427,109 @@ def _insert_history(
         )
 
 
+def test_worker_observability_returns_runtime_outcomes_and_running_tasks(client, monkeypatch, temp_db):
+    _seed_project("proj-1", "Target Project")
+    _insert_history(
+        worker_name="alpha",
+        project_id="proj-1",
+        task_type="explore",
+        started_at="2024-01-01T00:00:00Z",
+        completed_at="2024-01-01T00:05:00Z",
+        duration_seconds=5.0,
+        outcome="success",
+    )
+    _insert_history(
+        worker_name="beta",
+        project_id="proj-1",
+        task_type="reason",
+        started_at="2024-01-01T01:00:00Z",
+        completed_at="2024-01-01T01:04:00Z",
+        duration_seconds=4.0,
+        outcome="failed",
+    )
+    snapshot = _snapshot()
+    snapshot["runtime"] = {
+        "max_workers": 6,
+        "max_running_projects": 2,
+        "max_project_workers": 2,
+        "running_task_count": 1,
+        "running_project_count": 1,
+    }
+    snapshot["running_tasks"] = [
+        {
+            "worker_name": "alpha",
+            "project_id": "proj-1",
+            "task_type": "explore",
+            "current_task": "explore project=proj-1 intent=i1",
+            "intent_id": "i1",
+            "running_seconds": 18.0,
+        }
+    ]
+    snapshot["rejections"] = [
+        {
+            "project_id": "proj-1",
+            "task_type": "reason",
+            "worker_name": "beta",
+            "rejected": True,
+            "seconds_remaining": 12.0,
+        }
+    ]
+    _patch_proxy(monkeypatch, response=_FakeResponse(snapshot))
+
+    resp = client.get("/api/workers/observability")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["summary"]["max_workers"] == 6
+    assert body["summary"]["running_tasks"] == 1
+    assert body["summary"]["rejection_count"] == 1
+    assert body["outcomes"]["success"] == 1
+    assert body["outcomes"]["failed"] == 1
+    assert body["running_tasks"][0]["project_name"] == "Target Project"
+    assert body["rejections"][0]["worker_name"] == "beta"
+
+
+def test_worker_observability_recent_history_is_most_recent_first(client, monkeypatch, temp_db):
+    _seed_project("proj-1", "Target Project")
+    _insert_history(
+        worker_name="alpha",
+        project_id="proj-1",
+        task_type="bootstrap",
+        started_at="2024-01-01T00:00:00Z",
+        completed_at="2024-01-01T00:01:00Z",
+        duration_seconds=1.0,
+        outcome="success",
+    )
+    _insert_history(
+        worker_name="alpha",
+        project_id="proj-1",
+        task_type="reason",
+        started_at="2024-01-01T02:00:00Z",
+        completed_at="2024-01-01T02:02:00Z",
+        duration_seconds=2.0,
+        outcome="released",
+    )
+    snapshot = _snapshot()
+    snapshot["runtime"] = {
+        "max_workers": 4,
+        "max_running_projects": 2,
+        "max_project_workers": 2,
+        "running_task_count": 0,
+        "running_project_count": 0,
+    }
+    snapshot["running_tasks"] = []
+    snapshot["rejections"] = []
+    _patch_proxy(monkeypatch, response=_FakeResponse(snapshot))
+
+    resp = client.get("/api/workers/observability")
+
+    assert resp.status_code == 200
+    history = resp.json()["recent_history"]
+    assert history[0]["started_at"] == "2024-01-01T02:00:00Z"
+    assert history[0]["outcome"] == "released"
+    assert history[1]["started_at"] == "2024-01-01T00:00:00Z"
+
+
 def test_history_returns_at_most_20_most_recent(client, temp_db):
     """Req 11.1: at most the 20 most recent tasks are returned, newest first."""
     _seed_project("proj-1", "Target Project")

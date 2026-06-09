@@ -71,6 +71,73 @@ class WorkerTaskHistoryEntry(BaseModel):
     outcome: Literal["success", "failed", "rejected", "released"]
 
 
+class WorkerObservabilitySummary(BaseModel):
+    total: int = 0
+    online: int = 0
+    busy: int = 0
+    idle: int = 0
+    offline: int = 0
+    disabled: int = 0
+    running_tasks: int = 0
+    running_projects: int = 0
+    rejection_count: int = 0
+    max_workers: int = 0
+    max_running_projects: int = 0
+    max_project_workers: int = 0
+
+
+class WorkerObservabilityOutcomes(BaseModel):
+    success: int = 0
+    failed: int = 0
+    rejected: int = 0
+    released: int = 0
+
+
+class WorkerObservabilityTaskType(BaseModel):
+    task_type: str
+    count: int = 0
+
+
+class WorkerObservabilityRunningTask(BaseModel):
+    worker_name: str
+    project_id: str
+    project_name: str
+    task_type: str
+    current_task: str
+    intent_id: str | None = None
+    running_seconds: float | None = None
+
+
+class WorkerObservabilityRecentTask(BaseModel):
+    worker_name: str
+    project_id: str
+    project_name: str
+    task_type: str
+    outcome: Literal["success", "failed", "rejected", "released"]
+    started_at: str
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+    intent_id: str | None = None
+
+
+class WorkerObservabilityRejection(BaseModel):
+    worker_name: str
+    project_id: str
+    project_name: str
+    task_type: str
+    rejected: bool = True
+    seconds_remaining: float | None = None
+
+
+class WorkerObservability(BaseModel):
+    summary: WorkerObservabilitySummary
+    outcomes: WorkerObservabilityOutcomes
+    task_mix: list[WorkerObservabilityTaskType] = Field(default_factory=list)
+    running_tasks: list[WorkerObservabilityRunningTask] = Field(default_factory=list)
+    recent_history: list[WorkerObservabilityRecentTask] = Field(default_factory=list)
+    rejections: list[WorkerObservabilityRejection] = Field(default_factory=list)
+
+
 TaskType = Literal["reason", "explore", "bootstrap"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 

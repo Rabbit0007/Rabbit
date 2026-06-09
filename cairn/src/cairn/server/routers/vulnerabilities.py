@@ -27,12 +27,14 @@ from fastapi.responses import Response
 
 from datetime import datetime, timezone
 
-from cairn.server.activity_service import record_audit
+from cairn.server.activity_service import record_audit, record_notification
 from cairn.server.db import get_conn
 from cairn.server.vulnerabilities_models import (
     ExportRecord,
     Severity,
     Vulnerability,
+    VulnerabilityBatchStatusResult,
+    VulnerabilityBatchStatusUpdate,
     VulnerabilitySummary,
     VulnerabilityStatus,
     VulnerabilityStatusUpdate,
@@ -1006,6 +1008,20 @@ def _export_filename(vulnerabilities: list[Vulnerability], extension: str) -> st
     return f"{safe}.{extension}"
 
 
+def _apply_merged_vulnerability_status(target: Vulnerability, status: VulnerabilityStatus) -> None:
+    fact_ids = target.related_fact_ids or [target.fact_id]
+    placeholders = ",".join("?" for _ in fact_ids)
+    with get_conn() as conn:
+        conn.execute(
+            f"""
+            UPDATE vulnerabilities
+            SET status = ?
+            WHERE project_id = ? AND fact_id IN ({placeholders})
+            """,
+            [status, target.project_id, *fact_ids],
+        )
+
+
 @router.patch("/{vulnerability_id}/status", response_model=Vulnerability)
 def update_vulnerability_status(
     vulnerability_id: str, payload: VulnerabilityStatusUpdate
@@ -1021,18 +1037,7 @@ def update_vulnerability_status(
     if target is None:
         raise HTTPException(status_code=404, detail="Vulnerability not found")
 
-    fact_ids = target.related_fact_ids or [target.fact_id]
-    placeholders = ",".join("?" for _ in fact_ids)
-    with get_conn() as conn:
-        conn.execute(
-            f"""
-            UPDATE vulnerabilities
-            SET status = ?
-            WHERE project_id = ? AND fact_id IN ({placeholders})
-            """,
-            [payload.status, target.project_id, *fact_ids],
-        )
-
+    _apply_merged_vulnerability_status(target, payload.status)
     status_label = "已忽略" if payload.status == "ignored" else "已确认"
     record_audit(
         "vulnerability.status",
@@ -1040,7 +1045,47 @@ def update_vulnerability_status(
         target_type="vulnerability",
         target_id=vulnerability_id,
     )
+    record_notification(
+        f"漏洞状态已更新",
+        level="warning" if payload.status == "ignored" else "success",
+        body=f"{target.project_name} · {target.fact_id} · {status_label}",
+        link="#/vulnerabilities",
+    )
     return target.model_copy(update={"status": payload.status})
+
+
+@router.post("/batch/status", response_model=VulnerabilityBatchStatusResult)
+def batch_update_vulnerability_status(payload: VulnerabilityBatchStatusUpdate) -> VulnerabilityBatchStatusResult:
+    """Update the review status for multiple merged vulnerabilities at once."""
+    all_vulnerabilities = _query_filtered_vulnerabilities(None, None)
+    by_id = {vuln.id: vuln for vuln in all_vulnerabilities}
+    targets = [by_id[item] for item in payload.ids if item in by_id]
+    if not targets:
+        raise HTTPException(status_code=404, detail="Vulnerabilities not found")
+
+    missing_ids = [item for item in payload.ids if item not in by_id]
+    for target in targets:
+        _apply_merged_vulnerability_status(target, payload.status)
+
+    status_label = "已忽略" if payload.status == "ignored" else "已确认"
+    record_audit(
+        "vulnerability.batch_status",
+        f"批量更新 {len(targets)} 条漏洞为{status_label}",
+        target_type="vulnerability",
+        detail=", ".join(target.id for target in targets[:10]),
+    )
+    record_notification(
+        f"漏洞批量状态更新",
+        level="warning" if payload.status == "ignored" else "success",
+        body=f"{len(targets)} 条漏洞已标记为{status_label}",
+        link="#/vulnerabilities",
+    )
+    return VulnerabilityBatchStatusResult(
+        count=len(targets),
+        status=payload.status,
+        ids=[target.id for target in targets],
+        missing_ids=missing_ids,
+    )
 
 
 def _report_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
@@ -1636,5 +1681,13 @@ def refresh_vulnerabilities() -> VulnerabilitySummary:
     separate request to ``/summary``.
     """
     scan_all_projects()
-
-    return vulnerabilities_summary()
+    summary = vulnerabilities_summary()
+    total = summary.critical + summary.high + summary.medium + summary.low
+    record_audit("vulnerability.refresh", "刷新漏洞报告汇总", target_type="vulnerability")
+    record_notification(
+        "漏洞报告已刷新",
+        level="info",
+        body=f"当前共 {total} 条漏洞，严重 {summary.critical} / 高危 {summary.high}",
+        link="#/vulnerabilities",
+    )
+    return summary

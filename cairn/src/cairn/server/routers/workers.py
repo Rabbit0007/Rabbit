@@ -38,6 +38,13 @@ from fastapi import APIRouter, HTTPException, Path
 
 from cairn.server.db import get_conn
 from cairn.server.workers_models import (
+    WorkerObservability,
+    WorkerObservabilityOutcomes,
+    WorkerObservabilityRecentTask,
+    WorkerObservabilityRejection,
+    WorkerObservabilityRunningTask,
+    WorkerObservabilitySummary,
+    WorkerObservabilityTaskType,
     WorkerConfigResponse,
     WorkerConfigUpdate,
     WorkerConnectionTestRequest,
@@ -298,24 +305,7 @@ def _heartbeat_seconds_ago(snapshot: dict[str, Any], worker_name: str) -> float 
     return None
 
 
-@router.get("", response_model=list[WorkerStatus])
-def list_workers() -> list[WorkerStatus]:
-    """Return the live status of every registered worker.
-
-    Proxies to the dispatcher's internal status endpoint and reshapes
-    the snapshot into one :class:`WorkerStatus` per registered worker
-    (requirement 9.1). For a busy worker, the current task description is
-    included (truncated to 120 characters by the model — requirement 9.4). Health
-    metrics — tasks completed (requirement 10.1), average duration (requirements
-    10.2, 10.3), and last heartbeat (requirement 10.4) — are derived from the
-    snapshot. A worker whose heartbeat health window has lapsed is reported as
-    ``offline`` (requirement 10.5).
-
-    When the dispatcher internal endpoint is unreachable, returns a ``503`` with
-    a connectivity warning rather than raising (requirement 9.5).
-    """
-    snapshot = _fetch_status_snapshot()
-
+def _build_worker_statuses(snapshot: dict[str, Any]) -> list[WorkerStatus]:
     workers = snapshot.get("workers")
     if not isinstance(workers, list):
         return []
@@ -343,9 +333,7 @@ def list_workers() -> list[WorkerStatus]:
             running=running_count,
         )
 
-        # Only busy workers surface a current task (requirement 9.4).
         current_task = current_tasks.get(name) if status == "busy" else None
-
         tasks_completed, avg_duration = completed_metrics.get(name, (0, None))
 
         result.append(
@@ -361,6 +349,150 @@ def list_workers() -> list[WorkerStatus]:
             )
         )
     return result
+
+
+@router.get("", response_model=list[WorkerStatus])
+def list_workers() -> list[WorkerStatus]:
+    """Return the live status of every registered worker.
+
+    Proxies to the dispatcher's internal status endpoint and reshapes
+    the snapshot into one :class:`WorkerStatus` per registered worker
+    (requirement 9.1). For a busy worker, the current task description is
+    included (truncated to 120 characters by the model — requirement 9.4). Health
+    metrics — tasks completed (requirement 10.1), average duration (requirements
+    10.2, 10.3), and last heartbeat (requirement 10.4) — are derived from the
+    snapshot. A worker whose heartbeat health window has lapsed is reported as
+    ``offline`` (requirement 10.5).
+
+    When the dispatcher internal endpoint is unreachable, returns a ``503`` with
+    a connectivity warning rather than raising (requirement 9.5).
+    """
+    snapshot = _fetch_status_snapshot()
+    return _build_worker_statuses(snapshot)
+
+
+@router.get("/observability", response_model=WorkerObservability)
+def worker_observability() -> WorkerObservability:
+    """Return additive worker scheduling observability for the admin console.
+
+    This endpoint does not replace ``GET /api/workers``; it complements it with
+    aggregate counters, recent task outcomes, running-task context, and active
+    rejection windows derived from the existing dispatcher snapshot plus the
+    persisted ``worker_task_history`` table.
+    """
+    snapshot = _fetch_status_snapshot()
+    statuses = _build_worker_statuses(snapshot)
+    runtime = snapshot.get("runtime") if isinstance(snapshot.get("runtime"), dict) else {}
+    rejections_payload = snapshot.get("rejections") if isinstance(snapshot.get("rejections"), list) else []
+    running_payload = snapshot.get("running_tasks") if isinstance(snapshot.get("running_tasks"), list) else []
+
+    with get_conn() as conn:
+        project_rows = conn.execute("SELECT id, title FROM projects").fetchall()
+        project_names = {row["id"]: row["title"] for row in project_rows}
+        history_rows = conn.execute(
+            """
+            SELECT
+                h.worker_name,
+                h.project_id,
+                COALESCE(p.title, h.project_id) AS project_name,
+                h.task_type,
+                h.intent_id,
+                h.started_at,
+                h.completed_at,
+                h.duration_seconds,
+                h.outcome
+            FROM worker_task_history h
+            LEFT JOIN projects p ON p.id = h.project_id
+            ORDER BY COALESCE(h.completed_at, h.started_at) DESC, h.id DESC
+            LIMIT 40
+            """
+        ).fetchall()
+
+    summary = WorkerObservabilitySummary(
+        total=len(statuses),
+        online=sum(1 for item in statuses if item.status in {"idle", "busy"}),
+        busy=sum(1 for item in statuses if item.status == "busy"),
+        idle=sum(1 for item in statuses if item.status == "idle"),
+        offline=sum(1 for item in statuses if item.status == "offline"),
+        disabled=sum(1 for item in statuses if item.status == "disabled"),
+        running_tasks=int(runtime.get("running_task_count") or len(running_payload) or 0),
+        running_projects=int(runtime.get("running_project_count") or 0),
+        rejection_count=sum(1 for item in rejections_payload if isinstance(item, dict) and item.get("rejected")),
+        max_workers=int(runtime.get("max_workers") or 0),
+        max_running_projects=int(runtime.get("max_running_projects") or 0),
+        max_project_workers=int(runtime.get("max_project_workers") or 0),
+    )
+
+    outcomes = WorkerObservabilityOutcomes()
+    task_mix_counts: dict[str, int] = {}
+    recent_history: list[WorkerObservabilityRecentTask] = []
+    for row in history_rows:
+        outcome = row["outcome"]
+        if outcome in {"success", "failed", "rejected", "released"}:
+            setattr(outcomes, outcome, getattr(outcomes, outcome) + 1)
+        task_type = row["task_type"]
+        task_mix_counts[task_type] = task_mix_counts.get(task_type, 0) + 1
+        if len(recent_history) < 12:
+            recent_history.append(
+                WorkerObservabilityRecentTask(
+                    worker_name=row["worker_name"],
+                    project_id=row["project_id"],
+                    project_name=row["project_name"],
+                    task_type=task_type,
+                    outcome=outcome,
+                    started_at=row["started_at"],
+                    completed_at=row["completed_at"],
+                    duration_seconds=row["duration_seconds"],
+                    intent_id=row["intent_id"],
+                )
+            )
+
+    task_mix = [
+        WorkerObservabilityTaskType(task_type=task_type, count=count)
+        for task_type, count in sorted(task_mix_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    running_tasks: list[WorkerObservabilityRunningTask] = []
+    for item in running_payload:
+        if not isinstance(item, dict):
+            continue
+        project_id = str(item.get("project_id") or "")
+        running_tasks.append(
+            WorkerObservabilityRunningTask(
+                worker_name=str(item.get("worker_name") or "-"),
+                project_id=project_id,
+                project_name=project_names.get(project_id, project_id or "-"),
+                task_type=str(item.get("task_type") or "-"),
+                current_task=str(item.get("current_task") or "-"),
+                intent_id=item.get("intent_id"),
+                running_seconds=float(item["running_seconds"]) if isinstance(item.get("running_seconds"), (int, float)) else None,
+            )
+        )
+
+    rejections: list[WorkerObservabilityRejection] = []
+    for item in rejections_payload:
+        if not isinstance(item, dict):
+            continue
+        project_id = str(item.get("project_id") or "")
+        rejections.append(
+            WorkerObservabilityRejection(
+                worker_name=str(item.get("worker_name") or "-"),
+                project_id=project_id,
+                project_name=project_names.get(project_id, project_id or "-"),
+                task_type=str(item.get("task_type") or "-"),
+                rejected=bool(item.get("rejected", True)),
+                seconds_remaining=float(item["seconds_remaining"]) if isinstance(item.get("seconds_remaining"), (int, float)) else None,
+            )
+        )
+
+    return WorkerObservability(
+        summary=summary,
+        outcomes=outcomes,
+        task_mix=task_mix,
+        running_tasks=running_tasks,
+        recent_history=recent_history,
+        rejections=rejections,
+    )
 
 
 @router.get("/config", response_model=WorkerConfigResponse)
@@ -390,10 +522,16 @@ def update_worker_config(config: WorkerConfigUpdate) -> WorkerConfigResponse:
         timeout=_test_timeout(),
     )
     try:
-        from cairn.server.activity_service import record_audit
+        from cairn.server.activity_service import record_audit, record_notification
 
         worker_count = len(config.workers) if getattr(config, "workers", None) is not None else 0
         record_audit("worker.config", f"更新工作节点配置（{worker_count} 个节点）", target_type="worker")
+        record_notification(
+            f"工作节点配置已更新",
+            level="info",
+            body=f"当前纳管 {worker_count} 个 Worker",
+            link="#/workers",
+        )
     except Exception:
         pass
     return WorkerConfigResponse.model_validate(payload)

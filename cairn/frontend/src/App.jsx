@@ -6,10 +6,11 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
-  Bell,
   Bot,
+  CalendarDays,
   CheckCheck,
   CheckCircle2,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   Circle,
@@ -21,12 +22,14 @@ import {
   Folder,
   History,
   Home,
-  Inbox,
   KeyRound,
   Loader2,
   Lock,
+  LayoutGrid,
+  List,
   LogOut,
   Monitor,
+  MoreVertical,
   Moon,
   Network,
   Pause,
@@ -41,11 +44,25 @@ import {
   Sparkles,
   Square,
   Sun,
+  Tag,
   Trash2,
   User,
   X,
 } from "lucide-react";
 import { apiRequest, downloadFromApi } from "./api";
+import NotificationBell from "./components/notifications/NotificationBell";
+import {
+  Badge,
+  ConfirmModal,
+  EmptyState,
+  MetricCard,
+  MiniStat,
+  Modal,
+  PageHeader,
+  ProjectSummaryCard,
+  Toast,
+  VulnerabilitySummaryCard,
+} from "./components/ui";
 import {
   SEVERITY_META,
   STATUS_META,
@@ -68,6 +85,36 @@ try {
 const APP_NAME = "Rabbit";
 const HUMAN_WORKER = "Human";
 const SECRET_MASK = "********";
+const VULN_FOCUS_STORAGE_KEY = "rabbit:vuln-focus";
+const PROJECT_PRESET_STORAGE_KEY = "rabbit:project-preset";
+const WORKER_PRESET_STORAGE_KEY = "rabbit:worker-preset";
+const VULN_FILTERS_STORAGE_KEY = "rabbit:vuln-filters";
+
+function queueVulnerabilityFocus(id, hash = "#/vulnerabilities") {
+  if (typeof window !== "undefined" && id) {
+    window.sessionStorage.setItem(VULN_FOCUS_STORAGE_KEY, String(id));
+  }
+  go(hash);
+}
+
+function queueRoutePreset(storageKey, payload, hash) {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(payload || {}));
+  }
+  go(hash);
+}
+
+function consumeRoutePreset(storageKey) {
+  if (typeof window === "undefined") return null;
+  const raw = window.sessionStorage.getItem(storageKey);
+  if (!raw) return null;
+  window.sessionStorage.removeItem(storageKey);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 function useRoute() {
   const [route, setRoute] = useState(parseHash);
@@ -248,16 +295,54 @@ function TopNav({ route, user, theme, onToggleTheme, onLogout, onPassword, onSet
         ? "审计日志"
         : activeNav?.[1] || APP_NAME;
   const reportSubnav = [
-    ["overview", "报告总览"],
-    ["critical", "严重漏洞"],
-    ["high", "高危漏洞"],
-    ["medium", "中危漏洞"],
-    ["low", "低危漏洞"],
-    ["confirmed", "已确认漏洞"],
-    ["ignored", "已忽略漏洞"],
-    ["export-records", "导出记录"],
+    { title: null, items: [["overview", "报告总览"]] },
+    {
+      title: "按严重程度",
+      items: [
+        ["critical", "严重漏洞"],
+        ["high", "高危漏洞"],
+        ["medium", "中危漏洞"],
+        ["low", "低危漏洞"],
+      ],
+    },
+    {
+      title: "按处理状态",
+      items: [
+        ["confirmed", "已确认漏洞"],
+        ["ignored", "已忽略漏洞"],
+      ],
+    },
+    { title: null, items: [["export-records", "导出记录"]] },
   ];
+  const vulnRouteActive = route.page === "vulnerabilities";
+  const [reportExpanded, setReportExpanded] = useState(vulnRouteActive);
+  const [reportManual, setReportManual] = useState(false);
   const activeView = route.page === "vulnerabilities" ? route.view || "overview" : null;
+  const searchPlaceholder =
+    route.page === "projects" || route.page === "project"
+      ? "搜索项目名称、编号、负责人、标签..."
+      : "搜索漏洞标题、编号、项目、标签...";
+
+  useEffect(() => {
+    if (vulnRouteActive) {
+      if (!reportManual) setReportExpanded(true);
+      return;
+    }
+    setReportExpanded(false);
+    setReportManual(false);
+  }, [reportManual, vulnRouteActive]);
+
+  const toggleVulnerabilityNav = () => {
+    if (!vulnRouteActive) {
+      setReportManual(false);
+      setReportExpanded(true);
+      go("#/vulnerabilities");
+      return;
+    }
+    setReportManual(true);
+    setReportExpanded((prev) => !prev);
+  };
+
   return (
     <>
       <header className="top-utility">
@@ -268,7 +353,7 @@ function TopNav({ route, user, theme, onToggleTheme, onLogout, onPassword, onSet
           <span>{APP_NAME}</span>
         </button>
         <div className="top-section-label">{sectionLabel}</div>
-        <GlobalSearch setToast={setToast} />
+        <GlobalSearch setToast={setToast} placeholder={searchPlaceholder} shortcutLabel="⌘K" />
         <div className="nav-actions">
           <NotificationBell setToast={setToast} />
           <button
@@ -302,27 +387,35 @@ function TopNav({ route, user, theme, onToggleTheme, onLogout, onPassword, onSet
           {mainNav.map(([key, label, Icon]) => {
             const active = route.page === key || (key === "projects" && route.page === "project");
             return (
-              <div key={key} className={cn("nav-group", active && "active")}>
+              <div key={key} className={cn("nav-group", active && "active", key === "vulnerabilities" && reportExpanded && "expanded")}>
                 <button
-                  className={cn("nav-tab", active && "active")}
+                  className={cn("nav-tab", active && key !== "vulnerabilities" && "active", key === "vulnerabilities" && active && "module-open")}
                   type="button"
-                  onClick={() => go(key === "projects" ? "#/projects" : `#/${key}`)}
+                  onClick={() => (key === "vulnerabilities" ? toggleVulnerabilityNav() : go(key === "projects" ? "#/projects" : `#/${key}`))}
                 >
                   <Icon size={17} />
                   {label}
                   {key === "vulnerabilities" && <ChevronDown className="nav-caret" size={14} />}
                 </button>
-                {key === "vulnerabilities" && active && (
+                {key === "vulnerabilities" && reportExpanded && (
                   <div className="sub-nav">
-                    {reportSubnav.map(([view, label]) => (
-                      <button
-                        key={view}
-                        className={cn(activeView === view && "active")}
-                        type="button"
-                        onClick={() => go(view === "overview" ? "#/vulnerabilities" : `#/vulnerabilities/${view}`)}
-                      >
-                        {label}
-                      </button>
+                    {reportSubnav.map((group, index) => (
+                      <div key={group.title || `group-${index}`} className="sub-nav-group">
+                        {group.title && <span className="sub-nav-group-label">{group.title}</span>}
+                        <div className="sub-nav-list">
+                          {group.items.map(([view, label]) => (
+                            <button
+                              key={view}
+                              className={cn(activeView === view && "active")}
+                              type="button"
+                              onClick={() => go(view === "overview" ? "#/vulnerabilities" : `#/vulnerabilities/${view}`)}
+                            >
+                              <span className="sub-nav-indicator" />
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -351,7 +444,7 @@ function TopNav({ route, user, theme, onToggleTheme, onLogout, onPassword, onSet
   );
 }
 
-function GlobalSearch({ setToast }) {
+function GlobalSearch({ setToast, placeholder = "搜索漏洞标题、编号、项目、标签...", shortcutLabel = "" }) {
   const [term, setTerm] = useState("");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -448,7 +541,7 @@ function GlobalSearch({ setToast }) {
         <Search size={15} />
         <input
           value={term}
-          placeholder="搜索漏洞标题、编号、项目、标签..."
+          placeholder={placeholder}
           aria-label="全局搜索"
           onChange={(event) => setTerm(event.target.value)}
           onFocus={() => term.trim() && setOpen(true)}
@@ -456,6 +549,7 @@ function GlobalSearch({ setToast }) {
             if (event.key === "Escape") reset();
           }}
         />
+        {!term && shortcutLabel && <span className="global-search-shortcut">{shortcutLabel}</span>}
         {term && (
           <button type="button" className="global-search-clear" onClick={reset} aria-label="清空搜索">
             <X size={14} />
@@ -515,182 +609,6 @@ function GlobalSearch({ setToast }) {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function NotificationBell({ setToast }) {
-  const [count, setCount] = useState(0);
-  const [open, setOpen] = useState(false);
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const wrapRef = useRef(null);
-
-  const loadCount = useCallback(async () => {
-    try {
-      const res = await apiRequest("/api/notifications/unread-count");
-      setCount(Number(res?.count) || 0);
-    } catch {
-      // Silent: the badge simply stays at its last value.
-    }
-  }, []);
-
-  useEffect(() => {
-    loadCount();
-    const timer = window.setInterval(loadCount, 10000);
-    return () => window.clearInterval(timer);
-  }, [loadCount]);
-
-  useEffect(() => {
-    const onClick = (event) => {
-      if (wrapRef.current && !wrapRef.current.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-
-  const loadList = useCallback(async () => {
-    setLoading(true);
-    try {
-      const list = await apiRequest("/api/notifications?limit=50");
-      const items = Array.isArray(list) ? list : [];
-      setItems(items);
-      // Mark the just-shown unread notifications as read, then refresh the badge.
-      const unreadIds = items.filter((item) => !item.read).map((item) => item.id);
-      if (unreadIds.length) {
-        await apiRequest("/api/notifications/read", { method: "POST", body: { ids: unreadIds } }).catch(() => {});
-        setItems((prev) => prev.map((item) => ({ ...item, read: true })));
-      }
-      await loadCount();
-    } catch (error) {
-      if (setToast) setToast({ type: "danger", message: error.message || "通知加载失败" });
-    } finally {
-      setLoading(false);
-    }
-  }, [setToast, loadCount]);
-
-  const togglePanel = async () => {
-    const next = !open;
-    setOpen(next);
-    if (next) await loadList();
-  };
-
-  const markAllRead = async () => {
-    try {
-      const res = await apiRequest("/api/notifications/read", { method: "POST" });
-      setCount(Number(res?.count) || 0);
-      setItems((prev) => prev.map((item) => ({ ...item, read: true })));
-    } catch (error) {
-      if (setToast) setToast({ type: "danger", message: error.message || "操作失败" });
-    }
-  };
-
-  const clearAll = async () => {
-    try {
-      await apiRequest("/api/notifications", { method: "DELETE" });
-      setItems([]);
-      setCount(0);
-    } catch (error) {
-      if (setToast) setToast({ type: "danger", message: error.message || "操作失败" });
-    }
-  };
-
-  const openNotification = (item) => {
-    if (item.link) {
-      setOpen(false);
-      go(item.link);
-    }
-  };
-
-  return (
-    <div className="notification-wrap" ref={wrapRef}>
-      <button
-        className="icon-button notification-button"
-        type="button"
-        onClick={togglePanel}
-        aria-label="通知"
-        title="通知"
-      >
-        <Bell size={16} />
-        {count > 0 && <span className="notification-dot">{count > 99 ? "99+" : count}</span>}
-      </button>
-      {open && (
-        <div className="notification-panel">
-          <header className="notification-panel-head">
-            <strong>通知</strong>
-            <div className="notification-actions">
-              <button type="button" onClick={markAllRead} disabled={!items.length}>
-                <CheckCheck size={14} />
-                全部已读
-              </button>
-              <button type="button" className="danger" onClick={clearAll} disabled={!items.length}>
-                <Trash2 size={14} />
-                清空
-              </button>
-            </div>
-          </header>
-          <div className="notification-list">
-            {loading ? (
-              <div className="search-empty">
-                <Loader2 className="spin" size={16} />
-                <span>加载中...</span>
-              </div>
-            ) : items.length === 0 ? (
-              <div className="search-empty">
-                <Inbox size={18} />
-                <span>暂无通知</span>
-              </div>
-            ) : (
-              items.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={cn("notification-item", !item.read && "unread", item.link && "linked")}
-                  onClick={() => openNotification(item)}
-                >
-                  <span className={cn("notification-level", item.level || "info")} />
-                  <span className="notification-item-main">
-                    <strong>{item.title}</strong>
-                    {item.body && <p>{clampText(item.body, 90)}</p>}
-                    <small>{formatTime(item.created_at)}</small>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ConfirmModal({ title = "确认操作", message, tone = "default", confirmLabel = "确认", cancelLabel = "取消", onConfirm, onCancel }) {
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="modal-card confirm-card" role="dialog" aria-modal="true">
-        <div className="confirm-body">
-          <span className={cn("confirm-icon", tone)}>
-            {tone === "danger" ? <AlertTriangle size={22} /> : <AlertCircle size={22} />}
-          </span>
-          <div className="confirm-text">
-            <h2>{title}</h2>
-            {message && <p>{message}</p>}
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button className="ghost-button" type="button" onClick={onCancel}>
-            {cancelLabel}
-          </button>
-          <button
-            className={cn("primary-button compact", tone === "danger" && "danger")}
-            type="button"
-            onClick={onConfirm}
-            autoFocus
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </section>
     </div>
   );
 }
@@ -795,37 +713,147 @@ function AuthPage({ onAuthed, setToast }) {
   const [form, setForm] = useState({ username: "", password: "", confirm_password: "", captcha_answer: "" });
   const [captcha, setCaptcha] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [captchaLoading, setCaptchaLoading] = useState(false);
+  const [authMessage, setAuthMessage] = useState(null);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [clock, setClock] = useState(Date.now());
 
   const loadCaptcha = useCallback(async () => {
-    const data = await apiRequest("/api/auth/captcha");
-    setCaptcha(data);
-    setForm((prev) => ({ ...prev, captcha_answer: "" }));
+    setCaptchaLoading(true);
+    try {
+      const data = await apiRequest("/api/auth/captcha");
+      setCaptcha(data);
+      setForm((prev) => ({ ...prev, captcha_answer: "" }));
+    } catch (error) {
+      setCaptcha(null);
+      throw error;
+    } finally {
+      setCaptchaLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     loadCaptcha().catch((error) => setToast({ type: "danger", message: error.message }));
   }, [loadCaptcha, setToast]);
 
+  useEffect(() => {
+    if (!cooldownUntil) return undefined;
+    const timer = window.setInterval(() => setClock(Date.now()), 300);
+    return () => window.clearInterval(timer);
+  }, [cooldownUntil]);
+
+  const isRegister = mode === "register";
+  const cooldownSeconds = Math.max(0, Math.ceil((cooldownUntil - clock) / 1000));
+  const passwordsMismatch = isRegister && form.confirm_password.length > 0 && form.password !== form.confirm_password;
+  const requiredFilled =
+    form.username.trim() &&
+    form.password &&
+    form.captcha_answer.trim() &&
+    (!isRegister || form.confirm_password);
+  const canSubmit = Boolean(
+    requiredFilled && captcha?.captcha_id && !passwordsMismatch && !loading && !captchaLoading && cooldownSeconds === 0,
+  );
+  const submitLabel = loading
+    ? isRegister
+      ? "正在注册..."
+      : "正在登录..."
+    : cooldownSeconds > 0
+      ? `${cooldownSeconds} 秒后重试`
+      : isRegister
+        ? "注册账号"
+        : "登录";
+
+  const updateField = (key, value) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (key === "username") {
+      setFailedAttempts(0);
+      setCooldownUntil(0);
+    }
+    setAuthMessage(null);
+  };
+
+  const switchMode = (nextMode) => {
+    setMode(nextMode);
+    setAuthMessage(null);
+    setLoading(false);
+    setFailedAttempts(0);
+    setCooldownUntil(0);
+    setForm((prev) => ({ ...prev, password: "", confirm_password: "", captcha_answer: "" }));
+    loadCaptcha().catch(() => {});
+  };
+
+  const describeAuthError = (error) => {
+    if (error?.status === 400 && String(error.message || "").includes("验证码")) {
+      return { type: "warning", title: "验证码无效", body: error.message };
+    }
+    if (error?.status === 401) {
+      return {
+        type: "danger",
+        title: "账号或密码错误",
+        body: "请检查账号、密码和验证码。为安全起见，不区分账号是否存在。",
+      };
+    }
+    if (error?.status === 409 && isRegister) {
+      return { type: "warning", title: "用户名不可用", body: "这个用户名已被占用，请换一个再试。" };
+    }
+    if (error?.status === 422) {
+      return {
+        type: "warning",
+        title: "输入格式不符合要求",
+        body: isRegister ? "用户名需 3-32 个字符，密码长度至少 8 位。" : "请填写用户名、密码和验证码。",
+      };
+    }
+    if (error?.status === 429) {
+      return {
+        type: "danger",
+        title: "登录尝试过多",
+        body: "该账号短时间内失败次数过多，服务端已临时限制登录。请 15 分钟后再试。",
+      };
+    }
+    return { type: "danger", title: "认证请求失败", body: "服务暂时没有返回有效结果，请检查网络或稍后重试。" };
+  };
+
   const submit = async (event) => {
     event.preventDefault();
-    if (mode === "register" && form.password !== form.confirm_password) {
-      setToast({ type: "warning", message: "两次输入的密码不一致" });
+    if (loading) return;
+    if (!captcha?.captcha_id) {
+      setAuthMessage({ type: "warning", title: "验证码未就绪", body: "请先刷新验证码后再提交。" });
       return;
     }
+    if (passwordsMismatch) {
+      setAuthMessage({ type: "warning", title: "两次密码不一致", body: "请重新确认要设置的密码。" });
+      return;
+    }
+    setAuthMessage({ type: "info", title: isRegister ? "正在创建账户" : "正在验证身份", body: "请稍候，不要重复提交。" });
     setLoading(true);
     try {
-      await apiRequest(`/api/auth/${mode === "login" ? "login" : "register"}`, {
+      await apiRequest(`/api/auth/${isRegister ? "register" : "login"}`, {
         method: "POST",
         body: {
-          username: form.username,
+          username: form.username.trim(),
           password: form.password,
           captcha_id: captcha?.captcha_id,
           captcha_answer: form.captcha_answer,
         },
       });
+      setFailedAttempts(0);
+      setCooldownUntil(0);
+      setAuthMessage({ type: "success", title: "验证通过", body: "正在进入工作台。" });
       await onAuthed();
     } catch (error) {
-      setToast({ type: "danger", message: error.message || "认证失败" });
+      const message = describeAuthError(error);
+      setAuthMessage(message);
+      if (!isRegister && error?.status === 401) {
+        setFailedAttempts((current) => {
+          const next = current + 1;
+          if (next >= 3) {
+            setCooldownUntil(Date.now() + Math.min(10, next * 2) * 1000);
+            setClock(Date.now());
+          }
+          return next;
+        });
+      }
       await loadCaptcha().catch(() => {});
     } finally {
       setLoading(false);
@@ -879,14 +907,14 @@ function AuthPage({ onAuthed, setToast }) {
 
         <main className="auth-form-panel">
           {mode === "register" && (
-            <button className="auth-back" type="button" onClick={() => setMode("login")}>
+            <button className="auth-back" type="button" onClick={() => switchMode("login")} disabled={loading}>
               <ArrowLeft size={16} />
               返回登录
             </button>
           )}
           <div className="auth-title align-left">
-            <h1>{mode === "login" ? "欢迎回来" : "创建账户"} <span>👋</span></h1>
-            <p>{mode === "login" ? "登录以继续安全探索工作流" : "加入 Rabbit 安全探索平台"}</p>
+            <h1>{isRegister ? "创建账户" : "欢迎回来"}</h1>
+            <p>{isRegister ? "加入 Rabbit 安全探索平台" : "登录以继续安全探索工作流"}</p>
           </div>
           {mode === "login" && (
             <div className="segmented auth-login-tabs">
@@ -901,13 +929,31 @@ function AuthPage({ onAuthed, setToast }) {
               </button>
             </div>
           )}
+          <div className="auth-security-note">
+            <ShieldCheck size={16} />
+            <span>验证码校验、失败次数限制和安全 Session 已启用</span>
+          </div>
+          {authMessage && (
+            <div className={cn("auth-inline-alert", authMessage.type)} role="alert" aria-live="polite">
+              {authMessage.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+              <div>
+                <strong>{authMessage.title}</strong>
+                <p>{authMessage.body}</p>
+                {!isRegister && failedAttempts > 0 && authMessage.type === "danger" && (
+                  <small>当前浏览器已记录 {failedAttempts} 次失败；服务端会按账号执行 15 分钟窗口限流。</small>
+                )}
+              </div>
+            </div>
+          )}
           <form className="stack-form auth-stack-form" onSubmit={submit}>
             <label>
               <span>用户名</span>
               <input
                 autoComplete="username"
+                required
+                disabled={loading}
                 value={form.username}
-                onChange={(event) => setForm({ ...form, username: event.target.value })}
+                onChange={(event) => updateField("username", event.target.value)}
                 placeholder="请输入用户名"
               />
             </label>
@@ -916,8 +962,10 @@ function AuthPage({ onAuthed, setToast }) {
               <input
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
                 type="password"
+                required
+                disabled={loading}
                 value={form.password}
-                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                onChange={(event) => updateField("password", event.target.value)}
                 placeholder={mode === "login" ? "请输入密码" : "请设置密码"}
               />
             </label>
@@ -927,34 +975,42 @@ function AuthPage({ onAuthed, setToast }) {
                 <input
                   autoComplete="new-password"
                   type="password"
+                  required
+                  disabled={loading}
+                  aria-invalid={passwordsMismatch}
+                  className={passwordsMismatch ? "input-invalid" : ""}
                   value={form.confirm_password}
-                  onChange={(event) => setForm({ ...form, confirm_password: event.target.value })}
+                  onChange={(event) => updateField("confirm_password", event.target.value)}
                   placeholder="请再次输入密码"
                 />
+                {passwordsMismatch && <small className="field-hint danger">两次输入的密码不一致</small>}
               </label>
             )}
             <label>
               <span>验证码</span>
               <div className="captcha-row">
                 <input
+                  required
+                  disabled={loading || captchaLoading}
+                  inputMode="numeric"
                   value={form.captcha_answer}
-                  onChange={(event) => setForm({ ...form, captcha_answer: event.target.value })}
+                  onChange={(event) => updateField("captcha_answer", event.target.value)}
                   placeholder="请输入计算结果"
                 />
-                <button className="captcha-chip" type="button" onClick={loadCaptcha}>
-                  {captcha?.question || "刷新"}
-                  <RefreshCw size={15} />
+                <button className="captcha-chip" type="button" onClick={loadCaptcha} disabled={loading || captchaLoading}>
+                  {captchaLoading ? "获取中" : captcha?.question || "刷新"}
+                  <RefreshCw className={captchaLoading ? "spin" : ""} size={15} />
                 </button>
               </div>
             </label>
-            <button className="primary-button auth-submit" type="submit" disabled={loading}>
+            <button className="primary-button auth-submit" type="submit" disabled={!canSubmit}>
               {loading ? <Loader2 className="spin" size={18} /> : <Lock size={18} />}
-              {mode === "login" ? "登录" : "注册账号"}
+              {submitLabel}
             </button>
           </form>
           <p className="auth-switch">
             {mode === "login" ? "还没有账号？" : "已有账号？"}
-            <button type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+            <button type="button" onClick={() => switchMode(mode === "login" ? "register" : "login")} disabled={loading}>
               {mode === "login" ? "立即注册" : "返回登录"}
             </button>
           </p>
@@ -964,82 +1020,11 @@ function AuthPage({ onAuthed, setToast }) {
   );
 }
 
-function PageHeader({ icon: Icon, title, subtitle, actions, compact = false }) {
-  return (
-    <section className={cn("page-header", compact && "compact-report-header")}>
-      <div className="page-title">
-        {Icon && (
-          <span className="page-icon">
-            <Icon size={28} />
-          </span>
-        )}
-        <div>
-          <h1>{title}</h1>
-          <p>{subtitle}</p>
-        </div>
-      </div>
-      {actions && <div className="page-actions">{actions}</div>}
-    </section>
-  );
-}
-
-function Toast({ toast, onClose }) {
-  return (
-    <div className={cn("toast", toast.type || "info")}>
-      <span>{toast.message}</span>
-      <button type="button" onClick={onClose}>
-        <X size={16} />
-      </button>
-    </div>
-  );
-}
-
-function Modal({ title, subtitle, children, onClose, wide = false }) {
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <section className={cn("modal-card", wide && "wide")} role="dialog" aria-modal="true">
-        <header className="modal-header">
-          <div>
-            <h2>{title}</h2>
-            {subtitle && <p>{subtitle}</p>}
-          </div>
-          <button className="icon-button" type="button" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </header>
-        {children}
-      </section>
-    </div>
-  );
-}
-
-function EmptyState({ icon: Icon = Sparkles, title, subtitle, action }) {
-  return (
-    <div className="empty-state">
-      <Icon size={42} />
-      <h3>{title}</h3>
-      {subtitle && <p>{subtitle}</p>}
-      {action}
-    </div>
-  );
-}
-
-function Badge({ tone = "muted", children }) {
-  return <span className={cn("badge", tone)}>{children}</span>;
-}
-
-function MiniStat({ label, value }) {
-  return (
-    <div className="mini-stat">
-      <span>{label}</span>
-      <strong>{value ?? "-"}</strong>
-    </div>
-  );
-}
-
 function DashboardPage({ runAction, setToast }) {
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [workerObservability, setWorkerObservability] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -1047,12 +1032,16 @@ function DashboardPage({ runAction, setToast }) {
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [vulnList, projectList] = await Promise.all([
+      const [vulnList, projectList, workerList, workerTelemetry] = await Promise.all([
         apiRequest("/api/vulnerabilities"),
         apiRequest("/projects"),
+        apiRequest("/api/workers").catch(() => []),
+        apiRequest("/api/workers/observability").catch(() => null),
       ]);
       setVulnerabilities(Array.isArray(vulnList) ? vulnList : []);
       setProjects(Array.isArray(projectList) ? projectList : []);
+      setWorkers(Array.isArray(workerList) ? workerList : []);
+      setWorkerObservability(workerTelemetry);
       setLastUpdated(new Date());
     } catch (error) {
       if (!silent) setToast({ type: "danger", message: error.message || "仪表盘数据加载失败" });
@@ -1070,14 +1059,14 @@ function DashboardPage({ runAction, setToast }) {
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const severitySummary = useMemo(() => summarizeSeverity(vulnerabilities), [vulnerabilities]);
   const statusDistribution = useMemo(() => buildStatusDistribution(vulnerabilities), [vulnerabilities]);
   const trendData = useMemo(() => buildVulnerabilityTrend(vulnerabilities), [vulnerabilities]);
+  const severityTop = useMemo(() => buildSeverityTop(vulnerabilities), [vulnerabilities]);
   const recentActivity = useMemo(
     () =>
       [...vulnerabilities]
         .sort((a, b) => String(b.discovered_at || "").localeCompare(String(a.discovered_at || "")))
-        .slice(0, 6),
+        .slice(0, 5),
     [vulnerabilities],
   );
 
@@ -1085,14 +1074,65 @@ function DashboardPage({ runAction, setToast }) {
     const total = projects.length;
     const active = projects.filter((project) => project.status === "active").length;
     const completed = projects.filter((project) => project.status === "completed").length;
-    return { total, active, completed };
+    const stopped = projects.filter((project) => project.status === "stopped").length;
+    return { total, active, completed, stopped };
   }, [projects]);
+
+  const recentProjects = useMemo(
+    () =>
+      [...projects]
+        .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")))
+        .slice(0, 5),
+    [projects],
+  );
+
+  const workerCounts = useMemo(() => {
+    if (workerObservability?.summary) {
+      return {
+        total: workerObservability.summary.total || 0,
+        online: workerObservability.summary.online || 0,
+        running: workerObservability.summary.busy || 0,
+        idle: workerObservability.summary.idle || 0,
+        offline: workerObservability.summary.offline || 0,
+      };
+    }
+    return workers.reduce(
+      (acc, worker) => {
+        acc.total += 1;
+        if (worker.status === "busy") acc.running += 1;
+        if (worker.status === "idle") acc.idle += 1;
+        if (worker.status === "idle" || worker.status === "busy") acc.online += 1;
+        else acc.offline += 1;
+        return acc;
+      },
+      { total: 0, online: 0, running: 0, idle: 0, offline: 0 },
+    );
+  }, [workerObservability, workers]);
+
+  const workerHighlights = useMemo(() => {
+    const rank = { busy: 0, idle: 1, offline: 2, disabled: 3 };
+    return [...workers]
+      .sort((left, right) => {
+        const rankDelta = (rank[left.status] ?? 99) - (rank[right.status] ?? 99);
+        if (rankDelta !== 0) return rankDelta;
+        return String(left.name || "").localeCompare(String(right.name || ""));
+      })
+      .slice(0, 5);
+  }, [workers]);
+
+  const projectStatusMeta =
+    {
+      active: { label: "运行中", tone: "success" },
+      completed: { label: "已完成", tone: "info" },
+      stopped: { label: "已停止", tone: "warning" },
+    };
 
   const quickActions = [
     { key: "new", label: "新建项目", desc: "定义起点、目标和提示", icon: Plus, onClick: () => setNewOpen(true) },
     { key: "vulns", label: "漏洞报告", desc: "查看与管理漏洞", icon: AlertTriangle, onClick: () => go("#/vulnerabilities") },
     { key: "workers", label: "工作节点", desc: "状态与模型配置", icon: Monitor, onClick: () => go("#/workers") },
     { key: "templates", label: "模板", desc: "复用项目模板", icon: FileText, onClick: () => go("#/templates") },
+    { key: "audit", label: "审计日志", desc: "查看关键操作留痕", icon: History, onClick: () => go("#/audit") },
   ];
 
   return (
@@ -1100,7 +1140,7 @@ function DashboardPage({ runAction, setToast }) {
       <PageHeader
         icon={Home}
         title="仪表盘"
-        subtitle="安全探索全局概览：漏洞态势、趋势与最近活动"
+        subtitle="系统全局概览：项目、风险、Worker 与最近活动"
         actions={
           <>
             <div className="status-pill">
@@ -1114,83 +1154,188 @@ function DashboardPage({ runAction, setToast }) {
           </>
         }
       />
-      <section className="content-wrap vulnerability-report-page">
+      <section className="content-wrap dashboard-shell">
         {loading ? (
           <EmptyState icon={Loader2} title="正在加载仪表盘" />
         ) : (
           <>
-            <div className="metric-grid severity">
-              {["critical", "high", "medium", "low"].map((level) => (
-                <MetricCard
-                  key={level}
-                  label={`${SEVERITY_META[level].label}漏洞`}
-                  value={severitySummary[level] || 0}
-                  tone={level}
-                />
-              ))}
-              <MetricCard label="已确认" value={statusDistribution.confirmed || 0} tone="success" />
+            <div className="metric-grid dashboard-metric-grid">
+              <MetricCard
+                label="全部项目"
+                value={projectCounts.total}
+                tone="info"
+                icon={Folder}
+                description="所有项目总数"
+                onClick={() => go("#/projects")}
+              />
+              <MetricCard
+                label="运行中项目"
+                value={projectCounts.active}
+                tone="success"
+                icon={Play}
+                description="当前正在执行"
+                onClick={() => queueRoutePreset(PROJECT_PRESET_STORAGE_KEY, { status: "active" }, "#/projects")}
+              />
+              <MetricCard
+                label="漏洞总数"
+                value={statusDistribution.total || 0}
+                tone="high"
+                icon={ShieldAlert}
+                description="当前纳入管理的漏洞"
+                onClick={() => go("#/vulnerabilities")}
+              />
+              <MetricCard
+                label="在线 Worker"
+                value={workerCounts.online}
+                tone="violet"
+                icon={Monitor}
+                description="当前可接收任务"
+                onClick={() => queueRoutePreset(WORKER_PRESET_STORAGE_KEY, { status: "online" }, "#/workers")}
+              />
             </div>
-            <div className="metric-grid">
-              <MetricCard label="全部项目" value={projectCounts.total} tone="info" />
-              <MetricCard label="运行中项目" value={projectCounts.active} tone="success" />
-              <MetricCard label="已完成项目" value={projectCounts.completed} tone="muted" />
-              <MetricCard label="漏洞总数" value={statusDistribution.total || 0} tone="info" />
-            </div>
-            <div className="dashboard-grid">
+            <div className="dashboard-analytics-grid">
               <VulnerabilityTrend data={trendData} />
-              <VulnerabilityStatusDistribution data={statusDistribution} />
-            </div>
-            <section className="vuln-analysis-card dashboard-activity-card">
-              <header>
-                <h3>最近活动</h3>
-                <span>最新发现</span>
-              </header>
-              {recentActivity.length === 0 ? (
-                <p className="analysis-empty">暂无漏洞活动</p>
-              ) : (
-                <div className="recent-vuln-list">
-                  {recentActivity.map((item) => {
-                    const meta = SEVERITY_META[item.severity] || SEVERITY_META.low;
-                    return (
-                      <article key={`activity-${item.id}`}>
-                        <span className={cn("activity-dot", item.severity)} />
-                        <div>
-                          <strong title={item.title}>{clampText(item.title, 48)}</strong>
-                          <p>
-                            {meta.label} · {item.project_name} · {formatTime(item.discovered_at)}
-                          </p>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-            <section className="vuln-analysis-card dashboard-quick-card">
-              <header>
-                <h3>快捷操作</h3>
-                <span>常用入口</span>
-              </header>
-              <div className="quick-action-grid">
-                {quickActions.map((action) => (
-                  <button
-                    key={action.key}
-                    className={cn("quick-action", action.key)}
-                    type="button"
-                    onClick={action.onClick}
-                  >
-                    <span className="quick-action-chip">
-                      <action.icon size={20} />
-                    </span>
-                    <span className="quick-action-text">
-                      <strong>{action.label}</strong>
-                      <small>{action.desc}</small>
-                    </span>
-                    <ChevronRight size={18} />
-                  </button>
-                ))}
+              <div className="dashboard-side-stack">
+                <VulnerabilityStatusDistribution data={statusDistribution} />
+                <SeverityTopList items={severityTop} onSelect={(item) => queueVulnerabilityFocus(item.id)} />
               </div>
-            </section>
+            </div>
+            <div className="dashboard-ops-grid">
+              <section className="vuln-analysis-card dashboard-entity-card">
+                <header>
+                  <h3>项目概览</h3>
+                  <span>{projectCounts.total} 个项目</span>
+                </header>
+                <div className="dashboard-inline-stats">
+                  <MiniStat label="运行中" value={projectCounts.active} />
+                  <MiniStat label="已完成" value={projectCounts.completed} />
+                  <MiniStat label="已停止" value={projectCounts.stopped} />
+                </div>
+                {recentProjects.length === 0 ? (
+                  <p className="analysis-empty">暂无项目数据</p>
+                ) : (
+                  <div className="dashboard-entity-list">
+                    {recentProjects.map((project) => {
+                      const meta = projectStatusMeta[project.status] || projectStatusMeta.active;
+                      return (
+                        <button
+                          key={project.id}
+                          className="dashboard-entity-item"
+                          type="button"
+                          onClick={() => go(`#/projects/${project.id}`)}
+                        >
+                          <div className="dashboard-entity-copy">
+                            <strong title={project.title}>{project.title}</strong>
+                            <small>
+                              {project.id} · 更新于 {formatTime(project.updated_at || project.created_at)}
+                            </small>
+                          </div>
+                          <Badge tone={meta.tone}>{meta.label}</Badge>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+              <section className="vuln-analysis-card dashboard-entity-card">
+                <header>
+                  <h3>Worker 状态</h3>
+                  <span>{workerCounts.total} 个节点</span>
+                </header>
+                <div className="dashboard-inline-stats">
+                  <MiniStat label="在线" value={workerCounts.online} />
+                  <MiniStat label="运行中" value={workerCounts.running} />
+                  <MiniStat label="空闲" value={workerCounts.idle} />
+                  <MiniStat label="离线" value={workerCounts.offline} />
+                </div>
+                {workerHighlights.length === 0 ? (
+                  <p className="analysis-empty">暂无 Worker 数据</p>
+                ) : (
+                  <div className="dashboard-entity-list">
+                    {workerHighlights.map((worker) => {
+                      const meta = STATUS_META[worker.status] || STATUS_META.offline;
+                      return (
+                        <button
+                          key={worker.name}
+                          className="dashboard-entity-item"
+                          type="button"
+                          onClick={() => go("#/workers")}
+                        >
+                          <div className="dashboard-entity-copy">
+                            <strong title={worker.name}>{worker.name}</strong>
+                            <small title={worker.current_task || ""}>
+                              {worker.current_task
+                                ? clampText(worker.current_task, 56)
+                                : `最近心跳 ${relativeHeartbeat(worker.last_heartbeat_seconds_ago)}`}
+                            </small>
+                          </div>
+                          <Badge tone={meta.tone}>{meta.label}</Badge>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+            <div className="dashboard-bottom-grid">
+              <section className="vuln-analysis-card dashboard-activity-card">
+                <header>
+                  <h3>最近活动</h3>
+                  <span>最新发现</span>
+                </header>
+                {recentActivity.length === 0 ? (
+                  <p className="analysis-empty">暂无漏洞活动</p>
+                ) : (
+                  <div className="dashboard-activity-list">
+                    {recentActivity.map((item) => {
+                      const meta = SEVERITY_META[item.severity] || SEVERITY_META.low;
+                      return (
+                        <button
+                          key={`activity-${item.id}`}
+                          className="dashboard-activity-item"
+                          type="button"
+                          onClick={() => queueVulnerabilityFocus(item.id)}
+                        >
+                          <div className="dashboard-activity-head">
+                            <Badge tone={meta.tone}>{meta.label}</Badge>
+                            <code>{item.fact_id}</code>
+                          </div>
+                          <strong title={item.title}>{item.title}</strong>
+                          <p>
+                            {item.project_name} · {formatTime(item.discovered_at)}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+              <section className="vuln-analysis-card dashboard-quick-card">
+                <header>
+                  <h3>快捷入口</h3>
+                  <span>常用入口</span>
+                </header>
+                <div className="quick-action-grid">
+                  {quickActions.map((action) => (
+                    <button
+                      key={action.key}
+                      className={cn("quick-action", action.key)}
+                      type="button"
+                      onClick={action.onClick}
+                    >
+                      <span className="quick-action-chip">
+                        <action.icon size={20} />
+                      </span>
+                      <span className="quick-action-text">
+                        <strong>{action.label}</strong>
+                        <small>{action.desc}</small>
+                      </span>
+                      <ChevronRight size={18} />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
           </>
         )}
       </section>
@@ -1213,6 +1358,10 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
   const [loading, setLoading] = useState(true);
   const [newOpen, setNewOpen] = useState(false);
   const [reopenTarget, setReopenTarget] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1229,6 +1378,11 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const preset = consumeRoutePreset(PROJECT_PRESET_STORAGE_KEY);
+    if (preset?.status) setStatusFilter(String(preset.status));
+  }, []);
+
   const counts = useMemo(() => {
     const total = projects.length;
     const active = projects.filter((project) => project.status === "active").length;
@@ -1236,6 +1390,40 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
     const stopped = projects.filter((project) => project.status === "stopped").length;
     return { total, active, completed, stopped };
   }, [projects]);
+  const filteredProjects = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    return projects.filter((project) => {
+      if (statusFilter !== "all" && project.status !== statusFilter) return false;
+      if (keyword) {
+        const blob = [project.title, project.id, project.reason?.worker, project.reason?.trigger]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!blob.includes(keyword)) return false;
+      }
+      return true;
+    });
+  }, [projects, searchTerm, statusFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredProjects.length / pageSize));
+  const visibleProjects = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredProjects.slice(start, start + pageSize);
+  }, [filteredProjects, page, pageSize]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [pageSize, searchTerm, statusFilter]);
+
+  const projectTabs = [
+    { key: "all", label: "全部", count: counts.total, tone: "info" },
+    { key: "active", label: "运行中", count: counts.active, tone: "success" },
+    { key: "completed", label: "已完成", count: counts.completed, tone: "info" },
+    { key: "stopped", label: "已停止", count: counts.stopped, tone: "warning" },
+  ];
 
   const deleteProject = async (project) => {
     const ok = await confirmAction({
@@ -1276,40 +1464,89 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
   return (
     <>
       <PageHeader
-        icon={Network}
+        icon={Folder}
         title="项目"
         subtitle="面向目标的事实图探索工作区"
         actions={
           <>
-            <div className="status-pill">
+            <div className="status-pill project-running-pill">
               <span className="dot success" />
               <span>{counts.active} 个运行中</span>
             </div>
-            <button className="primary-outline" type="button" onClick={() => setNewOpen(true)}>
+            <button className="primary-button compact" type="button" onClick={() => setNewOpen(true)}>
               <Plus size={18} />
               新建项目
             </button>
-            <button className="ghost-button" type="button" onClick={load}>
+            <button className="primary-outline compact" type="button" onClick={load}>
               <RefreshCw size={18} />
               刷新
             </button>
           </>
         }
       />
-      <section className="content-wrap">
-        <div className="metric-grid">
-          <MetricCard label="全部项目" value={counts.total} tone="info" />
-          <MetricCard label="运行中" value={counts.active} tone="success" />
-          <MetricCard label="已完成" value={counts.completed} tone="muted" />
-          <MetricCard label="已停止" value={counts.stopped} tone="warning" />
+      <section className="content-wrap project-dashboard-page">
+        <div className="project-summary-grid">
+          <ProjectSummaryCard
+            label="全部项目"
+            value={counts.total}
+            description="所有项目总数"
+            tone="blue"
+            icon={Folder}
+          />
+          <ProjectSummaryCard
+            label="运行中"
+            value={counts.active}
+            description="正在运行的项目"
+            tone="green"
+            icon={Play}
+          />
+          <ProjectSummaryCard
+            label="已完成"
+            value={counts.completed}
+            description="已完成的项目"
+            tone="slate"
+            icon={CheckCircle2}
+          />
+          <ProjectSummaryCard
+            label="已停止"
+            value={counts.stopped}
+            description="已停止的项目"
+            tone="violet"
+            icon={Pause}
+          />
+        </div>
+        <div className="project-toolbar">
+          <div className="project-filter-tabs" role="tablist" aria-label="项目状态筛选">
+            {projectTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={statusFilter === tab.key}
+                className={cn("project-filter-tab", statusFilter === tab.key && "active", tab.tone)}
+                onClick={() => setStatusFilter(tab.key)}
+              >
+                <span>{tab.label}</span>
+                <strong>{tab.count}</strong>
+              </button>
+            ))}
+          </div>
+          <label className="project-search">
+            <Search size={15} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="搜索项目名称、编号、负责人、标签..."
+            />
+          </label>
         </div>
         {loading ? (
           <EmptyState icon={Loader2} title="正在加载项目" />
-        ) : projects.length === 0 ? (
+        ) : filteredProjects.length === 0 ? (
           <EmptyState
             icon={Folder}
-            title="还没有项目"
-            subtitle="创建一个项目后，Rabbit 会围绕起点、目标和提示生成事实图。"
+            title={projects.length === 0 ? "还没有项目" : "当前筛选下没有项目"}
+            subtitle={projects.length === 0 ? "创建一个项目后，Rabbit 会围绕起点、目标和提示生成事实图。" : "调整筛选条件后再试。"}
             action={
               <button className="primary-button compact" type="button" onClick={() => setNewOpen(true)}>
                 <Plus size={18} />
@@ -1318,8 +1555,9 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
             }
           />
         ) : (
-          <div className="project-grid">
-            {projects.map((project) => (
+          <>
+            <div className="project-grid project-grid-redesigned">
+            {visibleProjects.map((project) => (
               <ProjectCard
                 key={project.id}
                 project={project}
@@ -1329,7 +1567,49 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
                 onReopen={() => reopenProject(project)}
               />
             ))}
-          </div>
+            </div>
+            <div className="project-list-footer">
+              <span>共 {filteredProjects.length} 个项目{filteredProjects.length !== projects.length ? ` / 全部 ${projects.length} 个` : ""}</span>
+              <div className="project-list-footer-controls">
+                <label className="pagination-size">
+                  <select
+                    value={pageSize}
+                    onChange={(event) => {
+                      setPageSize(Number(event.target.value) || 10);
+                      setPage(1);
+                    }}
+                  >
+                    <option value="10">10 条/页</option>
+                    <option value="20">20 条/页</option>
+                    <option value="50">50 条/页</option>
+                  </select>
+                </label>
+                <div className="pagination project-pagination">
+                  <button
+                    type="button"
+                    className="nav"
+                    disabled={page <= 1}
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  >
+                    <ChevronLeft size={16} />
+                    上一页
+                  </button>
+                  <button type="button" className="active">
+                    {page} / {totalPages}
+                  </button>
+                  <button
+                    type="button"
+                    className="nav"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  >
+                    下一页
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </section>
       {newOpen && (
@@ -1357,72 +1637,124 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
   );
 }
 
-function MetricCard({ label, value, tone }) {
-  return (
-    <div className={cn("metric-card", tone)}>
-      <span className="metric-dot" />
-      <div>
-        <span>{label}</span>
-        <strong>{value}</strong>
-      </div>
-    </div>
-  );
-}
-
 function ProjectCard({ project, onDelete, onStop, onStart, onReopen }) {
-  const status = STATUS_META[project.status] || STATUS_META.active;
+  const statusMeta =
+    {
+      active: { label: "运行中", tone: "success" },
+      completed: { label: "已完成", tone: "info" },
+      stopped: { label: "已停止", tone: "warning" },
+    }[project.status] || STATUS_META.active;
+  const updatedAt = formatTime(project.updated_at || project.created_at);
   return (
     <article className="project-card">
-      <button className="project-open" type="button" onClick={() => go(`#/projects/${project.id}`)}>
-        <span className="project-folder">
-          <Folder size={24} />
-        </span>
-        <span className="project-main">
-          <span className="project-title-row">
-            <strong>{project.title}</strong>
-            <Badge tone={status.tone}>{status.label}</Badge>
+      <div className="project-card-head">
+        <button className="project-open" type="button" onClick={() => go(`#/projects/${project.id}`)}>
+          <span className="project-folder">
+            <Folder size={24} />
           </span>
-          <span className="project-sub">
-            {project.id} · 创建于 {formatTime(project.created_at)}
+          <span className="project-main">
+            <span className="project-title-row">
+              <strong>{project.title}</strong>
+              <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+            </span>
+            <span className="project-sub">
+              {project.id} · 创建于 {formatTime(project.created_at)}
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
+        <details className="project-more-menu">
+          <summary aria-label="更多操作">
+            <MoreVertical size={18} />
+          </summary>
+          <div className="project-more-panel">
+            <button type="button" onClick={() => go(`#/projects/${project.id}`)}>
+              <Eye size={15} />
+              打开项目
+            </button>
+            {project.status === "active" && (
+              <button type="button" onClick={onStop}>
+                <Square size={15} />
+                停止项目
+              </button>
+            )}
+            {project.status === "stopped" && (
+              <button type="button" onClick={onStart}>
+                <Play size={15} />
+                继续运行
+              </button>
+            )}
+            {project.status === "completed" && (
+              <button type="button" onClick={onReopen}>
+                <RefreshCw size={15} />
+                重新打开
+              </button>
+            )}
+            <button type="button" className="danger" onClick={onDelete}>
+              <Trash2 size={15} />
+              删除项目
+            </button>
+          </div>
+        </details>
+      </div>
       <div className="project-stats">
         <MiniStat label="事实" value={project.fact_count} />
         <MiniStat label="意图" value={project.intent_count} />
         <MiniStat label="工作中" value={project.working_intent_count} />
       </div>
+      <div className="project-meta-row">
+        <div>
+          <span>
+            <User size={14} />
+            负责人
+          </span>
+          <strong>未设置</strong>
+        </div>
+        <div>
+          <span>
+            <CalendarDays size={14} />
+            更新时间
+          </span>
+          <strong>{updatedAt}</strong>
+        </div>
+        <div>
+          <span>
+            <Tag size={14} />
+            标签
+          </span>
+          <strong>未设置</strong>
+        </div>
+      </div>
       {project.reason && (
-        <div className="reason-strip">
+        <div className="reason-strip project-reason-strip">
           <Activity size={16} />
           <span>{project.reason.worker}</span>
           <span>{project.reason.trigger}</span>
         </div>
       )}
-      <div className="card-actions">
-        <button className="ghost-button compact" type="button" onClick={() => go(`#/projects/${project.id}`)}>
+      <div className="card-actions project-action-row">
+        <button className="ghost-button compact project-action-button" type="button" onClick={() => go(`#/projects/${project.id}`)}>
           <Eye size={16} />
           打开
         </button>
         {project.status === "active" && (
-          <button className="ghost-button compact warning" type="button" onClick={onStop}>
+          <button className="ghost-button compact warning project-action-button" type="button" onClick={onStop}>
             <Square size={16} />
             停止
           </button>
         )}
         {project.status === "stopped" && (
-          <button className="ghost-button compact" type="button" onClick={onStart}>
+          <button className="ghost-button compact project-action-button" type="button" onClick={onStart}>
             <Play size={16} />
             继续
           </button>
         )}
         {project.status === "completed" && (
-          <button className="ghost-button compact" type="button" onClick={onReopen}>
+          <button className="ghost-button compact project-action-button" type="button" onClick={onReopen}>
             <RefreshCw size={16} />
             重新打开
           </button>
         )}
-        <button className="ghost-button compact danger" type="button" onClick={onDelete}>
+        <button className="ghost-button compact danger project-action-button" type="button" onClick={onDelete}>
           <Trash2 size={16} />
           删除
         </button>
@@ -2294,8 +2626,18 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
 
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [filters, setFilters] = useState({ severity: "", project_id: "", status: "", search: route?.search || "", date_from: "", date_to: "" });
-  const [expandedVulns, setExpandedVulns] = useState({});
+  const [filters, setFilters] = useState(() => {
+    const fallback = { severity: "", project_id: "", status: "", search: route?.search || "", date_from: "", date_to: "" };
+    if (typeof window === "undefined") return fallback;
+    try {
+      const raw = window.localStorage.getItem(VULN_FILTERS_STORAGE_KEY);
+      const saved = raw ? JSON.parse(raw) : {};
+      return { ...fallback, ...saved, search: route?.search || saved?.search || "" };
+    } catch {
+      return fallback;
+    }
+  });
+  const [detailVulnId, setDetailVulnId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -2378,6 +2720,22 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
     await load();
   };
 
+  const updateSelectedStatus = async (status) => {
+    if (!selectedIds.length) {
+      setToast({ type: "warning", message: "请先选择要处理的漏洞" });
+      return;
+    }
+    const label = status === "ignored" ? "已批量标记为忽略" : "已批量恢复为已确认";
+    await runAction(label, () =>
+      apiRequest("/api/vulnerabilities/batch/status", {
+        method: "POST",
+        body: { ids: selectedIds, status },
+      }),
+    );
+    setSelectedIds([]);
+    await load();
+  };
+
   const visibleVulnerabilities = useMemo(() => {
     const term = filters.search.trim().toLowerCase();
     const from = filters.date_from;
@@ -2396,10 +2754,6 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
     });
   }, [filters.search, filters.date_from, filters.date_to, vulnerabilities]);
 
-  const filteredProjectCount = useMemo(
-    () => new Set(visibleVulnerabilities.map((item) => item.project_id)).size,
-    [visibleVulnerabilities],
-  );
   const filteredVulnCount = visibleVulnerabilities.length;
   const totalPages = Math.max(1, Math.ceil(filteredVulnCount / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -2413,13 +2767,39 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
   const visibleSummary = useMemo(() => summarizeSeverity(visibleVulnerabilities), [visibleVulnerabilities]);
   const statusDistribution = useMemo(() => buildStatusDistribution(visibleVulnerabilities), [visibleVulnerabilities]);
   const visibleIds = useMemo(() => visibleVulnerabilities.map((item) => item.id), [visibleVulnerabilities]);
+  const pageIds = useMemo(() => pagedVulnerabilities.map((item) => item.id), [pagedVulnerabilities]);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
-  const severityTop = useMemo(() => buildSeverityTop(visibleVulnerabilities), [visibleVulnerabilities]);
-  const trendData = useMemo(() => buildVulnerabilityTrend(visibleVulnerabilities), [visibleVulnerabilities]);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+  const detailVuln = useMemo(
+    () => vulnerabilities.find((item) => item.id === detailVulnId) || null,
+    [detailVulnId, vulnerabilities],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(VULN_FILTERS_STORAGE_KEY, JSON.stringify(filters));
+  }, [filters]);
 
   useEffect(() => {
     setSelectedIds((prev) => prev.filter((id) => visibleIds.includes(id)));
   }, [visibleIds]);
+
+  useEffect(() => {
+    if (detailVulnId && !vulnerabilities.some((item) => item.id === detailVulnId)) {
+      setDetailVulnId(null);
+    }
+  }, [detailVulnId, vulnerabilities]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const pendingId = window.sessionStorage.getItem(VULN_FOCUS_STORAGE_KEY);
+    if (!pendingId || !visibleVulnerabilities.length) return;
+    const focusIndex = visibleVulnerabilities.findIndex((item) => String(item.id) === pendingId);
+    if (focusIndex === -1) return;
+    setPage(Math.floor(focusIndex / pageSize) + 1);
+    setDetailVulnId(pendingId);
+    window.sessionStorage.removeItem(VULN_FOCUS_STORAGE_KEY);
+  }, [pageSize, visibleVulnerabilities]);
 
   // Reset to the first page whenever the result set or page size changes.
   useEffect(() => {
@@ -2435,9 +2815,21 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
 
-  const toggleVisibleSelected = () => {
-    setSelectedIds(allVisibleSelected ? [] : visibleIds);
+  const togglePageSelected = () => {
+    setSelectedIds((prev) =>
+      allPageSelected ? prev.filter((id) => !pageIds.includes(id)) : Array.from(new Set([...prev, ...pageIds])),
+    );
   };
+
+  const toggleVisibleSelected = () => {
+    setSelectedIds((prev) =>
+      allVisibleSelected ? prev.filter((id) => !visibleIds.includes(id)) : Array.from(new Set([...prev, ...visibleIds])),
+    );
+  };
+
+  const openDetail = (id) => setDetailVulnId(id);
+
+  const closeDetail = () => setDetailVulnId(null);
 
   if (view === "export-records") {
     return <ExportRecordsView setToast={setToast} confirmAction={confirmAction} />;
@@ -2451,7 +2843,7 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
         subtitle="查看和管理所有漏洞报告，跟踪漏洞处理进度和状态"
         actions={
           <button
-            className="ghost-button report-export-button"
+            className="primary-outline compact report-export-button"
             type="button"
             disabled={!selectedIds.length}
             onClick={() => exportMd({ selected: selectedIds, title: "rabbit-vulnerabilities" })}
@@ -2462,11 +2854,12 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
         }
       />
       <section className="content-wrap vulnerability-report-page">
-        <div className="metric-grid severity">
-          {["critical", "high", "medium", "low"].map((level) => (
-            <MetricCard key={level} label={`${SEVERITY_META[level].label}漏洞`} value={visibleSummary[level] || 0} tone={level} />
-          ))}
-          <MetricCard label="已确认" value={statusDistribution.confirmed || 0} tone="success" />
+        <div className="report-summary-grid">
+          <VulnerabilitySummaryCard icon={ShieldAlert} label="严重漏洞" value={visibleSummary.critical || 0} tone="critical" />
+          <VulnerabilitySummaryCard icon={AlertTriangle} label="高危漏洞" value={visibleSummary.high || 0} tone="high" />
+          <VulnerabilitySummaryCard icon={AlertCircle} label="中危漏洞" value={visibleSummary.medium || 0} tone="medium" />
+          <VulnerabilitySummaryCard icon={ShieldCheck} label="低危漏洞" value={visibleSummary.low || 0} tone="low" />
+          <VulnerabilitySummaryCard icon={CheckCheck} label="已确认" value={statusDistribution.confirmed || 0} tone="success" />
         </div>
         <div className="report-filter-bar">
           <label className="filter-search">
@@ -2474,7 +2867,7 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
             <input
               value={filters.search}
               onChange={(event) => setFilters({ ...filters, search: event.target.value })}
-              placeholder="搜索漏洞标题、编号、组件、标签..."
+              placeholder="搜索漏洞标题、编号、项目、标签..."
             />
           </label>
           <label className="filter-field">
@@ -2524,7 +2917,9 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
                 max={filters.date_to || undefined}
                 onChange={(event) => setFilters({ ...filters, date_from: event.target.value })}
               />
-              <span>→</span>
+              <span className="date-range-separator">
+                <ChevronRight size={14} />
+              </span>
               <input
                 type="date"
                 value={filters.date_to}
@@ -2547,22 +2942,56 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
         ) : visibleVulnerabilities.length === 0 ? (
           <EmptyState icon={CheckCircle2} title="没有匹配的漏洞" subtitle="当前筛选范围内尚未发现漏洞。" />
         ) : (
-          <div className="vuln-report-grid">
-            <article className="vuln-table-card">
-              <header className="vuln-table-title">
-                <div>
-                  <h2>漏洞列表</h2>
-                  <p>点击单条漏洞查看证据、过程和证明数据包</p>
-                </div>
-                <button className="ghost-button compact" type="button" disabled={!visibleIds.length} onClick={toggleVisibleSelected}>
-                  {allVisibleSelected ? "取消全选" : "全选当前"}
+          <article className="vuln-table-card vuln-table-card-full">
+            <header className="vuln-table-title">
+              <div>
+                <h2>漏洞列表</h2>
+                <p>点击单条漏洞查看证据、过程和证明数据包</p>
+              </div>
+              <div className="button-row">
+                <button className="ghost-button compact" type="button" disabled={!pageIds.length} onClick={togglePageSelected}>
+                  {allPageSelected ? "取消本页" : "选择本页"}
                 </button>
-              </header>
+                <button className="ghost-button compact" type="button" disabled={!visibleIds.length} onClick={toggleVisibleSelected}>
+                  {allVisibleSelected ? "取消结果集" : "全选结果集"}
+                </button>
+              </div>
+            </header>
+            {selectedIds.length > 0 && (
+              <div className="vuln-bulk-bar">
+                <div className="vuln-bulk-summary">
+                  <strong>已选 {selectedIds.length} 条</strong>
+                  <span>{allVisibleSelected ? "当前筛选结果已全选" : "可继续翻页追加选择"}</span>
+                </div>
+                <div className="button-row vuln-bulk-actions">
+                  <button className="ghost-button compact" type="button" onClick={() => updateSelectedStatus("confirmed")}>
+                    <CheckCircle2 size={15} />
+                    批量确认
+                  </button>
+                  <button className="ghost-button compact warning" type="button" onClick={() => updateSelectedStatus("ignored")}>
+                    <X size={15} />
+                    批量忽略
+                  </button>
+                  <button
+                    className="primary-outline compact"
+                    type="button"
+                    onClick={() => exportMd({ selected: selectedIds, title: "rabbit-vulnerabilities-batch" })}
+                  >
+                    <Download size={15} />
+                    批量导出
+                  </button>
+                  <button className="ghost-button compact" type="button" onClick={() => setSelectedIds([])}>
+                    清空选择
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="vuln-table-scroll">
               <div className="vuln-table-head">
                 <span />
                 <span>漏洞名称</span>
                 <span>所属项目</span>
-                <span>严重度</span>
+                <span>严重程度</span>
                 <span>状态</span>
                 <span>发现时间</span>
                 <span>操作</span>
@@ -2573,18 +3002,20 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
                     key={vuln.id}
                     vuln={vuln}
                     selected={selectedIds.includes(vuln.id)}
+                    active={detailVulnId === vuln.id}
                     onSelect={() => toggleSelected(vuln.id)}
-                    expanded={!!expandedVulns[vuln.id]}
-                    onToggle={() => setExpandedVulns({ ...expandedVulns, [vuln.id]: !expandedVulns[vuln.id] })}
+                    onOpen={() => openDetail(vuln.id)}
                     onExport={() => exportMd({ selected: [vuln.id], title: `${vuln.project_id}-${vuln.fact_id}` })}
                     onStatusChange={(status) => updateVulnerabilityStatus(vuln, status)}
                   />
                 ))}
               </div>
-              <footer className="vuln-table-footer">
-                <span>
-                  共 {filteredVulnCount} 条{filteredVulnCount > 0 ? ` · 第 ${pageStart}-${pageEnd} 条` : ""}
-                </span>
+            </div>
+            <footer className="vuln-table-footer">
+              <span className="vuln-table-footer-meta">
+                共 {filteredVulnCount} 条{filteredVulnCount > 0 ? ` · 第 ${pageStart}-${pageEnd} 条` : ""}
+              </span>
+              <div className="vuln-table-footer-controls">
                 <label className="pagination-size">
                   <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
                     {[10, 20, 50, 100].map((size) => (
@@ -2626,16 +3057,19 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
                     <ChevronRight size={14} />
                   </button>
                 </div>
-              </footer>
-            </article>
-            <aside className="vuln-side-panels">
-              <VulnerabilityTrend data={trendData} />
-              <SeverityTopList items={severityTop} />
-              <VulnerabilityStatusDistribution data={statusDistribution} />
-            </aside>
-          </div>
+              </div>
+            </footer>
+          </article>
         )}
       </section>
+      {detailVuln && (
+        <VulnerabilityDrawer
+          vuln={detailVuln}
+          onClose={closeDetail}
+          onExport={() => exportMd({ selected: [detailVuln.id], title: `${detailVuln.project_id}-${detailVuln.fact_id}` })}
+          onStatusChange={(status) => updateVulnerabilityStatus(detailVuln, status)}
+        />
+      )}
     </>
   );
 }
@@ -2957,7 +3391,7 @@ function VulnerabilityTrend({ data }) {
   );
 }
 
-function SeverityTopList({ items }) {
+function SeverityTopList({ items, onSelect }) {
   return (
     <section className="vuln-analysis-card severity-top-card">
       <header>
@@ -2971,12 +3405,17 @@ function SeverityTopList({ items }) {
           items.map((item, index) => {
             const meta = SEVERITY_META[item.severity] || SEVERITY_META.low;
             return (
-              <article key={`top-${item.id}`}>
+              <button
+                key={`top-${item.id}`}
+                className={cn("severity-top-item", onSelect && "linked")}
+                type="button"
+                onClick={() => onSelect?.(item)}
+              >
                 <span className="severity-top-rank">{index + 1}</span>
                 <span className={cn("status-badge", meta.tone)}>{meta.label}</span>
                 <strong title={item.title}>{clampText(item.title, 30)}</strong>
                 <code>{item.fact_id}</code>
-              </article>
+              </button>
             );
           })
         )}
@@ -3045,20 +3484,41 @@ function VulnerabilityStatusDistribution({ data }) {
   );
 }
 
-function VulnerabilityItem({ vuln, selected, onSelect, expanded, onToggle, onExport, onStatusChange }) {
+function VulnerabilityItem({ vuln, selected, active, onSelect, onOpen, onExport, onStatusChange }) {
   const meta = SEVERITY_META[vuln.severity] || SEVERITY_META.low;
   const ignored = vuln.status === "ignored";
   return (
-    <article className={cn("vuln-table-item", ignored && "ignored")}>
-      <div className="vuln-table-row">
-        <label className="vuln-select">
+    <article className={cn("vuln-table-item", ignored && "ignored", active && "active")}>
+      <div
+        className="vuln-table-row"
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
+        <label className="vuln-select" onClick={(event) => event.stopPropagation()}>
           <input type="checkbox" checked={selected} onChange={onSelect} />
         </label>
         <div className="vuln-name-cell">
           <div className="vuln-meta">
             <span>{vuln.fact_id}</span>
           </div>
-          <h3>{vuln.title}</h3>
+          <button
+            className="vuln-title-button"
+            type="button"
+            title={vuln.title}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpen();
+            }}
+          >
+            <span className="vuln-title-text">{vuln.title}</span>
+          </button>
         </div>
         <div className="vuln-project-cell">
           <strong>{vuln.project_name}</strong>
@@ -3071,37 +3531,85 @@ function VulnerabilityItem({ vuln, selected, onSelect, expanded, onToggle, onExp
           <Badge tone={ignored ? "muted" : "success"}>{ignored ? "已忽略" : "已确认"}</Badge>
         </div>
         <time>{formatTime(vuln.discovered_at)}</time>
-        <div className="button-row">
-          <button
-            className={cn("table-action", ignored ? "success" : "warning")}
-            type="button"
-            title={ignored ? "恢复确认" : "设为忽略"}
-            aria-label={ignored ? "恢复确认" : "设为忽略"}
-            onClick={() => onStatusChange(ignored ? "confirmed" : "ignored")}
-          >
-            {ignored ? <CheckCircle2 size={16} /> : <X size={16} />}
+        <div className="button-row vuln-table-actions" onClick={(event) => event.stopPropagation()}>
+          <button className="table-inline-action detail" type="button" onClick={onOpen} title="查看详情" aria-label="查看详情">
+            <Eye size={14} />
+            详情
           </button>
-          <button className="table-action" type="button" onClick={onExport} title="导出当前漏洞" aria-label="导出当前漏洞">
-            <Download size={16} />
-          </button>
-          <button className="table-action" type="button" onClick={onToggle} title="查看详情" aria-label="查看详情">
-            {expanded ? <ChevronDown size={16} /> : <Eye size={16} />}
-          </button>
+          <details className="table-row-menu" onClick={(event) => event.stopPropagation()}>
+            <summary className="table-inline-action" aria-label="更多操作">
+              <MoreVertical size={14} />
+              更多
+            </summary>
+            <div className="table-row-menu-panel">
+              <button type="button" onClick={onExport}>
+                <Download size={14} />
+                导出
+              </button>
+              <button
+                type="button"
+                onClick={() => onStatusChange(ignored ? "confirmed" : "ignored")}
+              >
+                {ignored ? <CheckCircle2 size={14} /> : <X size={14} />}
+                {ignored ? "恢复确认" : "设为忽略"}
+              </button>
+            </div>
+          </details>
         </div>
       </div>
-      {expanded && (
-        <div className="vuln-detail">
-          <div className="detail-grid cards">
-            <InfoBox label="项目来源" value={`${vuln.project_name} (${vuln.project_id})`} />
-            <InfoBox label="确认事实" value={vuln.fact_id} />
-            <InfoBox label="来源意图" value={vuln.source_intent_id || "未记录"} />
-            <InfoBox label="工作节点" value={vuln.source_worker || "未记录"} />
+    </article>
+  );
+}
+
+function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
+  const meta = SEVERITY_META[vuln.severity] || SEVERITY_META.low;
+  const ignored = vuln.status === "ignored";
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="drawer-backdrop" role="presentation" onClick={onClose}>
+      <aside
+        className="drawer-panel vulnerability-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`漏洞详情 ${vuln.fact_id}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="drawer-header">
+          <div className="drawer-heading">
+            <div className="drawer-kicker">
+              <span>{vuln.fact_id}</span>
+              <Badge tone={meta.tone}>{meta.label}</Badge>
+              <Badge tone={ignored ? "muted" : "success"}>{ignored ? "已忽略" : "已确认"}</Badge>
+            </div>
+            <h2>{vuln.title}</h2>
+            <p>
+              {vuln.project_name} · {vuln.project_id} · 发现于 {formatTime(vuln.discovered_at)}
+            </p>
           </div>
-          <section>
-            <h4>完整描述</h4>
-            <p className="soft-box">{vuln.description}</p>
+          <button className="icon-button drawer-close" type="button" onClick={onClose} aria-label="关闭详情">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="drawer-body">
+          <div className="drawer-info-grid">
+            <InfoBox label="所属项目" value={`${vuln.project_name} (${vuln.project_id})`} />
+            <InfoBox label="确认事实" value={vuln.fact_id} />
+            <InfoBox label="来源意图" value={vuln.source_intent_id || "-"} />
+            <InfoBox label="工作节点" value={vuln.source_worker || "-"} />
+          </div>
+          <section className="drawer-section">
+            <h4>证明说明</h4>
+            <p className="soft-box">{vuln.description || "未记录"}</p>
           </section>
-          <section>
+          <section className="drawer-section">
             <h4>关键证据</h4>
             <div className="evidence-list">
               {(vuln.evidence?.length ? vuln.evidence : ["未记录"]).map((item, index) => (
@@ -3109,7 +3617,7 @@ function VulnerabilityItem({ vuln, selected, onSelect, expanded, onToggle, onExp
               ))}
             </div>
           </section>
-          <section>
+          <section className="drawer-section">
             <h4>漏洞证明数据包</h4>
             <div className="packet-list">
               {(vuln.proof_packets || []).length === 0 ? (
@@ -3128,30 +3636,53 @@ function VulnerabilityItem({ vuln, selected, onSelect, expanded, onToggle, onExp
               )}
             </div>
           </section>
-          <section>
+          <section className="drawer-section">
             <h4>漏洞浮现过程</h4>
             <div className="process-list">
-              {(vuln.process || []).map((step, index) => (
-                <article className="process-step" key={`${step.id}-${index}`}>
-                  <span>{index + 1}</span>
-                  <div>
-                    <strong>
-                      {step.label || step.type || "过程"} {step.id || ""}
-                    </strong>
-                    <p>{step.description || "无描述"}</p>
-                    {(step.worker || step.time) && (
-                      <small>
-                        {step.worker || ""} {step.time ? `· ${formatTime(step.time)}` : ""}
-                      </small>
-                    )}
-                  </div>
-                </article>
-              ))}
+              {(vuln.process || []).length === 0 ? (
+                <p className="soft-box">未记录漏洞浮现过程。</p>
+              ) : (
+                (vuln.process || []).map((step, index) => (
+                  <article className="process-step" key={`${step.id}-${index}`}>
+                    <span>{index + 1}</span>
+                    <div>
+                      <strong>
+                        {step.label || step.type || "过程"} {step.id || ""}
+                      </strong>
+                      <p>{step.description || "无描述"}</p>
+                      {(step.worker || step.time) && (
+                        <small>
+                          {step.worker || ""} {step.time ? `· ${formatTime(step.time)}` : ""}
+                        </small>
+                      )}
+                    </div>
+                  </article>
+                ))
+              )}
             </div>
           </section>
         </div>
-      )}
-    </article>
+        <footer className="drawer-footer">
+          <button className="ghost-button compact" type="button" onClick={onClose}>
+            关闭
+          </button>
+          <div className="drawer-footer-actions">
+            <button className="primary-outline compact" type="button" onClick={onExport}>
+              <Download size={16} />
+              导出
+            </button>
+            <button
+              className={cn("ghost-button compact", ignored ? "success" : "warning")}
+              type="button"
+              onClick={() => onStatusChange(ignored ? "confirmed" : "ignored")}
+            >
+              {ignored ? <CheckCircle2 size={16} /> : <X size={16} />}
+              {ignored ? "恢复确认" : "设为忽略"}
+            </button>
+          </div>
+        </footer>
+      </aside>
+    </div>
   );
 }
 
@@ -3167,15 +3698,23 @@ function InfoBox({ label, value }) {
 function WorkersPage({ runAction, setToast, confirmAction }) {
   const [workers, setWorkers] = useState([]);
   const [config, setConfig] = useState(null);
+  const [observability, setObservability] = useState(null);
   const [history, setHistory] = useState({});
   const [expanded, setExpanded] = useState({});
   const [editor, setEditor] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [batchTesting, setBatchTesting] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [viewMode, setViewMode] = useState("grid");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ background = false } = {}) => {
+    if (background) setRefreshing(true);
     try {
-      const [statusList, configPayload] = await Promise.all([
+      const [statusList, configPayload, observabilityPayload] = await Promise.all([
         apiRequest("/api/workers").catch((error) => {
           setToast({ type: "warning", message: error.message || "工作节点状态暂不可用" });
           return [];
@@ -3184,18 +3723,34 @@ function WorkersPage({ runAction, setToast, confirmAction }) {
           setToast({ type: "warning", message: error.message || "Worker 配置暂不可用" });
           return null;
         }),
+        apiRequest("/api/workers/observability").catch(() => null),
       ]);
       setWorkers(statusList);
       setConfig(configPayload);
+      setObservability(observabilityPayload);
       setLastUpdated(new Date());
     } finally {
       setLoading(false);
+      if (background) setRefreshing(false);
     }
   }, [setToast]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const preset = consumeRoutePreset(WORKER_PRESET_STORAGE_KEY);
+    if (preset?.status) setStatusFilter(String(preset.status));
+  }, []);
+
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+    const timer = window.setInterval(() => {
+      load({ background: true }).catch(() => {});
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, load]);
 
   const statusByName = useMemo(() => new Map(workers.map((worker) => [worker.name, worker])), [workers]);
   const visibleWorkers = useMemo(() => {
@@ -3204,29 +3759,82 @@ function WorkersPage({ runAction, setToast, confirmAction }) {
     const statusOnly = workers.filter((worker) => !names.has(worker.name)).map((worker) => ({ ...worker, env: {} }));
     return [...configured, ...statusOnly];
   }, [config, workers]);
-
-  // Summary counts derived from the real worker status array (idle/busy/offline/
-  // disabled). "在线" = enabled and reachable (idle or busy); we never fabricate
-  // metrics that the API does not expose.
+  const configuredNames = useMemo(() => new Set((config?.workers || []).map((worker) => worker.name)), [config]);
+  const workerCards = useMemo(() => {
+    return visibleWorkers.map((worker) => {
+      const live = statusByName.get(worker.name) || worker;
+      const statusKey = live.status || (worker.enabled === false ? "disabled" : "offline");
+      const statusMeta = STATUS_META[statusKey] || STATUS_META.offline;
+      const taskTypes = worker.task_types?.length ? worker.task_types : [...TASK_TYPES];
+      return {
+        worker,
+        live,
+        statusKey,
+        statusMeta,
+        isManaged: configuredNames.has(worker.name),
+        modelLabel: workerModelLabel(worker),
+        runtimeLabel: workerRuntimeLabel(worker),
+        heartbeatLabel: relativeHeartbeat(live.last_heartbeat_seconds_ago),
+        taskTypes,
+        searchBlob: [
+          worker.name,
+          worker.type,
+          workerModelLabel(worker),
+          workerRuntimeLabel(worker),
+          statusMeta.label,
+          taskTypes.join(" "),
+          live.current_task || "",
+        ]
+          .join(" ")
+          .toLowerCase(),
+      };
+    });
+  }, [configuredNames, statusByName, visibleWorkers]);
   const workerCounts = useMemo(() => {
-    const counts = { total: visibleWorkers.length, online: 0, running: 0, offline: 0, tasks: 0 };
-    for (const worker of visibleWorkers) {
-      const status = statusByName.get(worker.name) || worker;
-      const effective = status.status || (worker.enabled === false ? "disabled" : "offline");
-      if (effective === "busy") counts.running += 1;
-      if (effective === "idle" || effective === "busy") counts.online += 1;
-      else counts.offline += 1;
-      counts.tasks += status.tasks_completed || 0;
+    const counts = { total: workerCards.length, online: 0, idle: 0, running: 0, offline: 0, disabled: 0, tasks: 0 };
+    for (const card of workerCards) {
+      if (card.statusKey === "busy") counts.running += 1;
+      if (card.statusKey === "idle") counts.idle += 1;
+      if (card.statusKey === "idle" || card.statusKey === "busy") counts.online += 1;
+      if (card.statusKey === "offline") counts.offline += 1;
+      if (card.statusKey === "disabled") counts.disabled += 1;
+      counts.tasks += card.live.tasks_completed || 0;
     }
     return counts;
-  }, [visibleWorkers, statusByName]);
+  }, [workerCards]);
+  const statusTabs = useMemo(
+    () => [
+      { key: "all", label: "全部", count: workerCounts.total, tone: "info" },
+      { key: "online", label: "在线", count: workerCounts.online, tone: "success" },
+      { key: "idle", label: "空闲", count: workerCounts.idle, tone: "info" },
+      { key: "offline", label: "离线", count: workerCounts.offline, tone: "danger" },
+      { key: "disabled", label: "已关闭", count: workerCounts.disabled, tone: "muted" },
+    ],
+    [workerCounts],
+  );
+  const filteredWorkers = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    const rank = { busy: 0, idle: 1, offline: 2, disabled: 3 };
+    return workerCards
+      .filter((card) => {
+        if (statusFilter === "online" && !["idle", "busy"].includes(card.statusKey)) return false;
+        if (statusFilter !== "all" && statusFilter !== "online" && card.statusKey !== statusFilter) return false;
+        if (keyword && !card.searchBlob.includes(keyword)) return false;
+        return true;
+      })
+      .sort((left, right) => {
+        const rankDelta = (rank[left.statusKey] ?? 99) - (rank[right.statusKey] ?? 99);
+        if (rankDelta !== 0) return rankDelta;
+        return right.live.tasks_completed - left.live.tasks_completed || left.worker.name.localeCompare(right.worker.name);
+      });
+  }, [searchTerm, statusFilter, workerCards]);
 
   const saveWorkers = async (nextWorkers, label = "Worker 配置已保存") => {
     const updated = await runAction(label, () =>
       apiRequest("/api/workers/config", { method: "PUT", body: { workers: nextWorkers } }),
     );
     setConfig(updated);
-    await load();
+    await load({ background: true });
   };
 
   const setEnabled = async (worker, enabled) => {
@@ -3281,31 +3889,86 @@ function WorkersPage({ runAction, setToast, confirmAction }) {
     await saveWorkers(config.workers.filter((item) => item.name !== worker.name), "Worker 已删除");
     setEditor(null);
   };
+  const openEditorForWorker = (worker) => {
+    if (configuredNames.has(worker.name)) {
+      setEditor(worker);
+      return;
+    }
+    setEditor(workerDraftFromStatus(worker, config?.workers || []));
+  };
+  const testVisibleWorkers = async () => {
+    if (!filteredWorkers.length || batchTesting) return;
+    setBatchTesting(true);
+    let ok = 0;
+    const failed = [];
+    try {
+      for (const card of filteredWorkers) {
+        try {
+          const source = config?.workers?.find((item) => item.name === card.worker.name) || card.worker;
+          const result = await apiRequest("/api/workers/config/test", {
+            method: "POST",
+            body: { worker: normalizeWorkerForSave(source) },
+          });
+          if (result.ok) ok += 1;
+          else failed.push(result.worker_name || card.worker.name);
+        } catch {
+          failed.push(card.worker.name);
+        }
+      }
+      setToast({
+        type: failed.length ? "warning" : "success",
+        message: failed.length
+          ? `批量测试完成：${ok} 个正常，${failed.length} 个失败`
+          : `批量测试完成：${ok} 个 Worker 连通性正常`,
+      });
+    } finally {
+      setBatchTesting(false);
+      await load({ background: true });
+    }
+  };
 
   return (
     <>
-      <PageHeader
-        icon={Monitor}
-        title="工作节点"
-        subtitle="实时状态、模型配置、任务历史与健康检查"
-        actions={
-          <>
-            <button className="primary-outline" type="button" disabled={!config} onClick={() => setEditor(defaultWorkerDraft(config?.workers || []))}>
-              <Plus size={18} />
-              新增 Worker
-            </button>
-            <div className="status-pill">
-              <span className="dot success" />
-              <span>{lastUpdated ? `更新于 ${lastUpdated.toLocaleTimeString("zh-CN")}` : "待更新"}</span>
+      <section className="content-wrap workers-console-page">
+        <section className="workers-console-shell">
+          <div className="workers-console-head">
+            <div className="workers-console-title">
+              <span className="workers-console-mark">
+                <Monitor size={28} />
+              </span>
+              <div>
+                <h1>工作节点</h1>
+                <p>管理 Worker 实例、模型通道、任务执行状态与健康检查</p>
+              </div>
             </div>
-            <button className="ghost-button" type="button" onClick={load}>
-              <RefreshCw size={18} />
-              刷新
-            </button>
-          </>
-        }
-      />
-      <section className="content-wrap">
+            <div className="workers-console-actions">
+              <label className="workers-search">
+                <Search size={16} />
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="搜索 Worker、模型、任务、标签..."
+                />
+              </label>
+              <button
+                className="primary-button compact"
+                type="button"
+                disabled={!config}
+                onClick={() => setEditor(defaultWorkerDraft(config?.workers || []))}
+              >
+                <Plus size={18} />
+                新增 Worker
+              </button>
+              <button className="ghost-button compact" type="button" disabled={!filteredWorkers.length || batchTesting} onClick={testVisibleWorkers}>
+                <Activity size={16} />
+                {batchTesting ? "测试中" : "批量测试"}
+              </button>
+              <button className="ghost-button compact" type="button" onClick={() => load({ background: true })} disabled={refreshing}>
+                <RefreshCw className={refreshing ? "spin" : ""} size={16} />
+                刷新
+              </button>
+            </div>
+          </div>
         {loading ? (
           <EmptyState icon={Loader2} title="正在读取工作节点" />
         ) : visibleWorkers.length === 0 ? (
@@ -3314,7 +3977,12 @@ function WorkersPage({ runAction, setToast, confirmAction }) {
             title="暂无 Worker"
             subtitle="新增 Worker 后，调度器会按优先级和并发配置分配任务。"
             action={
-              <button className="primary-button compact" type="button" disabled={!config} onClick={() => setEditor(defaultWorkerDraft([]))}>
+              <button
+                className="primary-button compact"
+                type="button"
+                disabled={!config}
+                onClick={() => setEditor(defaultWorkerDraft(config?.workers || []))}
+              >
                 <Plus size={18} />
                 新增 Worker
               </button>
@@ -3322,80 +3990,268 @@ function WorkersPage({ runAction, setToast, confirmAction }) {
           />
         ) : (
           <>
-            <div className="metric-grid">
-              <MetricCard label="在线" value={workerCounts.online} tone="success" />
-              <MetricCard label="离线" value={workerCounts.offline} tone="muted" />
-              <MetricCard label="运行中" value={workerCounts.running} tone="info" />
-              <MetricCard label="任务数" value={workerCounts.tasks} tone="info" />
+            <div className="workers-overview-grid">
+              <WorkerOverviewCard tone="success" label="在线节点" value={workerCounts.online} subtitle="可接收任务" />
+              <WorkerOverviewCard tone="muted" label="离线节点" value={workerCounts.offline} subtitle="等待恢复" />
+              <WorkerOverviewCard tone="info" label="运行中任务" value={workerCounts.running} subtitle="当前执行中" />
+              <WorkerOverviewCard tone="violet" label="累计任务数" value={workerCounts.tasks} subtitle="已记录完成" />
             </div>
-            <div className="worker-grid">
-            {visibleWorkers.map((worker) => {
-              const status = statusByName.get(worker.name) || worker;
-              const statusMeta = STATUS_META[status.status || (worker.enabled === false ? "disabled" : "offline")] || STATUS_META.offline;
-              return (
-                <article className="worker-card" key={worker.name}>
+            {observability && (
+              <div className="workers-observability-grid">
+                <section className="workers-observability-card">
                   <header>
-                    <span className={cn("worker-dot", statusMeta.tone)} />
-                    <div>
-                      <h3>{worker.name}</h3>
-                      <p>
-                        {worker.type} · {workerModelLabel(worker)}
-                      </p>
-                    </div>
-                    <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                    <h3>调度容量</h3>
+                    <span>实时限制</span>
                   </header>
-                  {status.current_task && <p className="current-task">{status.current_task}</p>}
-                  <div className="project-stats">
-                    <MiniStat label="任务数" value={status.tasks_completed ?? 0} />
-                    <MiniStat label="平均" value={status.avg_duration_seconds ? `${status.avg_duration_seconds}s` : "-"} />
-                    <MiniStat label="心跳" value={relativeHeartbeat(status.last_heartbeat_seconds_ago)} />
+                  <div className="workers-observability-stats">
+                    <MiniStat label="最大并发" value={observability.summary?.max_workers || 0} />
+                    <MiniStat label="运行任务" value={observability.summary?.running_tasks || 0} />
+                    <MiniStat label="运行项目" value={observability.summary?.running_projects || 0} />
+                    <MiniStat label="项目并发上限" value={observability.summary?.max_project_workers || 0} />
                   </div>
-                  <div className="card-actions">
-                    <button
-                      className={cn("ghost-button compact", worker.enabled === false ? "" : "warning")}
-                      type="button"
-                      disabled={!config}
-                      onClick={() => setEnabled(worker, worker.enabled === false)}
-                    >
-                      {worker.enabled === false ? <Play size={16} /> : <Pause size={16} />}
-                      {worker.enabled === false ? "启用" : "关闭"}
-                    </button>
-                    <button className="ghost-button compact" type="button" disabled={!config} onClick={() => testWorker(worker)}>
-                      <Activity size={16} />
-                      测试
-                    </button>
-                    <button className="ghost-button compact" type="button" disabled={!config} onClick={() => setEditor(worker)}>
-                      <Settings size={16} />
-                      编辑
-                    </button>
+                </section>
+                <section className="workers-observability-card">
+                  <header>
+                    <h3>最近结果</h3>
+                    <span>任务历史</span>
+                  </header>
+                  <div className="workers-outcome-grid">
+                    <MiniStat label="成功" value={observability.outcomes?.success || 0} />
+                    <MiniStat label="失败" value={observability.outcomes?.failed || 0} />
+                    <MiniStat label="拒绝" value={observability.outcomes?.rejected || 0} />
+                    <MiniStat label="释放" value={observability.outcomes?.released || 0} />
                   </div>
-                  <button className="history-toggle" type="button" onClick={() => toggleHistory(worker.name)}>
-                    {expanded[worker.name] ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                    {expanded[worker.name] ? "隐藏任务历史" : "显示任务历史"}
-                  </button>
-                  {expanded[worker.name] && (
-                    <div className="history-list">
-                      {(history[worker.name] || []).length === 0 ? (
-                        <p>该工作节点暂无任务历史记录。</p>
-                      ) : (
-                        history[worker.name].map((row, index) => (
-                          <article key={`${row.started_at}-${index}`}>
-                            <strong>{row.task_type}</strong>
-                            <span>{row.description}</span>
-                            <small>
-                              {row.project_name} · {formatTime(row.started_at)} · {row.outcome}
-                            </small>
-                          </article>
-                        ))
-                      )}
+                </section>
+                <section className="workers-observability-card">
+                  <header>
+                    <h3>任务类型</h3>
+                    <span>近 40 条</span>
+                  </header>
+                  {(observability.task_mix || []).length === 0 ? (
+                    <p className="analysis-empty">暂无任务分布</p>
+                  ) : (
+                    <div className="workers-task-mix">
+                      {observability.task_mix.map((item) => (
+                        <div key={item.task_type} className="workers-task-mix-item">
+                          <span>{item.task_type}</span>
+                          <strong>{item.count}</strong>
+                        </div>
+                      ))}
                     </div>
                   )}
-                </article>
-              );
-            })}
-          </div>
+                </section>
+                <section className="workers-observability-card">
+                  <header>
+                    <h3>调度观察</h3>
+                    <span>{observability.rejections?.length ? `${observability.rejections.length} 条退避` : "运行中任务"}</span>
+                  </header>
+                  {(observability.rejections || []).length > 0 ? (
+                    <div className="workers-observability-list">
+                      {observability.rejections.map((item, index) => (
+                        <article key={`${item.worker_name}-${item.project_id}-${index}`}>
+                          <strong>{item.worker_name}</strong>
+                          <span>{item.project_name} · {item.task_type}</span>
+                          <small>{item.seconds_remaining ? `${Math.round(item.seconds_remaining)} 秒后重试` : "等待恢复"}</small>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (observability.running_tasks || []).length > 0 ? (
+                    <div className="workers-observability-list">
+                      {observability.running_tasks.map((item, index) => (
+                        <article key={`${item.worker_name}-${item.project_id}-${index}`}>
+                          <strong>{item.worker_name}</strong>
+                          <span title={item.current_task}>{clampText(item.current_task, 52)}</span>
+                          <small>{item.project_name} · {item.task_type}</small>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (observability.recent_history || []).length > 0 ? (
+                    <div className="workers-observability-list">
+                      {observability.recent_history.slice(0, 4).map((item, index) => (
+                        <article key={`${item.worker_name}-${item.started_at}-${index}`}>
+                          <strong>{item.worker_name}</strong>
+                          <span>{item.project_name} · {item.task_type}</span>
+                          <small>{item.outcome} · {formatTime(item.started_at)}</small>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="analysis-empty">当前没有运行中任务或退避记录</p>
+                  )}
+                </section>
+              </div>
+            )}
+            <div className="workers-filter-bar">
+              <div className="workers-filter-tabs" role="tablist" aria-label="工作节点状态筛选">
+                {statusTabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={statusFilter === tab.key}
+                    className={cn("workers-filter-tab", statusFilter === tab.key && "active", tab.tone)}
+                    onClick={() => setStatusFilter(tab.key)}
+                  >
+                    <span>{tab.label}</span>
+                    <strong>{tab.count}</strong>
+                  </button>
+                ))}
+              </div>
+              <div className="workers-filter-controls">
+                <label className="workers-auto-refresh">
+                  <span className={cn("workers-auto-indicator", autoRefresh && "on")} />
+                  自动刷新
+                  <button
+                    className={cn("switch compact-switch", autoRefresh && "on")}
+                    type="button"
+                    onClick={() => setAutoRefresh((current) => !current)}
+                    aria-label={autoRefresh ? "关闭自动刷新" : "开启自动刷新"}
+                  >
+                    <span />
+                  </button>
+                </label>
+                <span className="workers-last-updated">
+                  {lastUpdated ? `更新于 ${lastUpdated.toLocaleTimeString("zh-CN")}` : "待更新"}
+                </span>
+                <div className="workers-view-toggle" role="tablist" aria-label="工作节点布局">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === "grid"}
+                    className={cn(viewMode === "grid" && "active")}
+                    onClick={() => setViewMode("grid")}
+                  >
+                    <LayoutGrid size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === "list"}
+                    className={cn(viewMode === "list" && "active")}
+                    onClick={() => setViewMode("list")}
+                  >
+                    <List size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+            {filteredWorkers.length === 0 ? (
+              <EmptyState icon={Search} title="没有匹配的工作节点" subtitle="调整关键字或状态筛选后再试。" />
+            ) : (
+              <div className={cn("workers-node-grid", viewMode === "list" && "list")}>
+                {filteredWorkers.map((card) => {
+                  const worker = card.worker;
+                  const status = card.live;
+                  const isExpanded = Boolean(expanded[worker.name]);
+                  const actionLabel = !card.isManaged ? "纳管" : worker.enabled === false ? "启用" : "关闭";
+                  return (
+                    <article className="worker-node-card" key={worker.name}>
+                      <div className="worker-node-card-head">
+                        <div className="worker-node-title">
+                          <span className={cn("worker-node-dot", card.statusMeta.tone)} />
+                          <div>
+                            <div className="worker-node-title-row">
+                              <h3>{worker.name}</h3>
+                              {!card.isManaged && <span className="worker-node-discovered">未纳管</span>}
+                            </div>
+                            <p>{card.worker.type} · {card.modelLabel}</p>
+                          </div>
+                        </div>
+                        <Badge tone={card.statusMeta.tone}>{card.statusMeta.label}</Badge>
+                      </div>
+                      {status.current_task && <div className="worker-node-task">{clampText(status.current_task, 132)}</div>}
+                      <div className="worker-node-meta">
+                        <div>
+                          <span>Provider</span>
+                          <strong>{worker.type}</strong>
+                        </div>
+                        <div>
+                          <span>Model</span>
+                          <strong>{card.modelLabel}</strong>
+                        </div>
+                        <div>
+                          <span>Runtime</span>
+                          <strong>{card.runtimeLabel}</strong>
+                        </div>
+                        <div>
+                          <span>最近心跳</span>
+                          <strong>{card.heartbeatLabel}</strong>
+                        </div>
+                      </div>
+                      <div className="worker-node-stats">
+                        <div>
+                          <span>任务数</span>
+                          <strong>{status.tasks_completed ?? 0}</strong>
+                        </div>
+                        <div>
+                          <span>平均耗时</span>
+                          <strong>{status.avg_duration_seconds ? `${status.avg_duration_seconds}s` : "-"}</strong>
+                        </div>
+                        <div>
+                          <span>最大并发</span>
+                          <strong>{worker.max_running ?? 1}</strong>
+                        </div>
+                        <div>
+                          <span>优先级</span>
+                          <strong>{worker.priority ?? 0}</strong>
+                        </div>
+                      </div>
+                      <div className="worker-node-tags">
+                        {card.taskTypes.map((taskType) => (
+                          <span key={taskType}>{taskType}</span>
+                        ))}
+                      </div>
+                      <div className="worker-node-actions">
+                        <button
+                          className={cn("worker-node-toggle", worker.enabled === false || !card.isManaged ? "start" : "stop")}
+                          type="button"
+                          disabled={!config}
+                          onClick={() => (card.isManaged ? setEnabled(worker, worker.enabled === false) : openEditorForWorker(worker))}
+                        >
+                          {worker.enabled === false || !card.isManaged ? <Play size={16} /> : <Pause size={16} />}
+                          {actionLabel}
+                        </button>
+                        <button className="ghost-button compact" type="button" disabled={!config} onClick={() => testWorker(worker)}>
+                          <Activity size={16} />
+                          测试
+                        </button>
+                        <button className="ghost-button compact" type="button" disabled={!config} onClick={() => openEditorForWorker(worker)}>
+                          <Settings size={16} />
+                          编辑
+                        </button>
+                        <button className="ghost-button compact" type="button" onClick={() => toggleHistory(worker.name)}>
+                          <History size={16} />
+                          {isExpanded ? "隐藏历史" : "历史"}
+                        </button>
+                        <button className="worker-node-menu" type="button" onClick={() => openEditorForWorker(worker)} aria-label="更多操作">
+                          <MoreVertical size={16} />
+                        </button>
+                      </div>
+                      {isExpanded && (
+                        <div className="history-list worker-node-history">
+                          {(history[worker.name] || []).length === 0 ? (
+                            <p>该工作节点暂无任务历史记录。</p>
+                          ) : (
+                            history[worker.name].map((row, index) => (
+                              <article key={`${row.started_at}-${index}`}>
+                                <strong>{row.task_type}</strong>
+                                <span>{row.description}</span>
+                                <small>
+                                  {row.project_name} · {formatTime(row.started_at)} · {row.outcome}
+                                </small>
+                              </article>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
+        </section>
       </section>
       {editor && (
         <WorkerEditor
@@ -3409,9 +4265,41 @@ function WorkersPage({ runAction, setToast, confirmAction }) {
   );
 }
 
+function WorkerOverviewCard({ tone, label, value, subtitle }) {
+  return (
+    <article className={cn("worker-overview-card", tone)}>
+      <span className="worker-overview-ring" />
+      <div>
+        <strong>{label}</strong>
+        <b>{value}</b>
+        <small>{subtitle}</small>
+      </div>
+    </article>
+  );
+}
+
 function workerModelLabel(worker) {
   const env = worker.env || {};
   return env.ANTHROPIC_MODEL || env.CODEX_MODEL || env.PI_MODEL || "未配置模型";
+}
+
+function workerRuntimeLabel(worker) {
+  if (worker.type === "pi") return "local";
+  if (worker.type === "mock") return "mock";
+  return "cloud";
+}
+
+function workerDraftFromStatus(worker, existingWorkers) {
+  return {
+    ...defaultWorkerDraft(existingWorkers),
+    ...worker,
+    enabled: worker.enabled !== false,
+    task_types: worker.task_types?.length ? worker.task_types : [...TASK_TYPES],
+    max_running: worker.max_running ?? 1,
+    priority: worker.priority ?? 0,
+    env: { ...(worker.env || {}) },
+    secret_env_keys: worker.secret_env_keys || [],
+  };
 }
 
 function defaultWorkerDraft(existingWorkers) {

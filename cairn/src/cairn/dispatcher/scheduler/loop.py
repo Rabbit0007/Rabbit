@@ -60,6 +60,7 @@ class DispatcherLoop:
         self.project_cursor = 0
         self._settings_checked = False
         self._startup_healthchecks_checked = False
+        self._internal_api_started = False
         self._config_lock = threading.RLock()
         # Optional, default-off task-history ring buffer for the read-only
         # internal status API. When ``None`` (the default), no history is
@@ -141,8 +142,8 @@ class DispatcherLoop:
 
     def run(self, once: bool = False) -> None:
         try:
+            self._internal_api_started = self._maybe_start_internal_api()
             self.run_startup_healthchecks()
-            self._maybe_start_internal_api()
             while True:
                 try:
                     if not self._settings_checked:
@@ -184,7 +185,7 @@ class DispatcherLoop:
         self._run_startup_healthchecks(show_commands=show_commands)
         self._startup_healthchecks_checked = True
 
-    def _maybe_start_internal_api(self) -> None:
+    def _maybe_start_internal_api(self) -> bool:
         """Optionally start the internal API.
 
         Opt-in via the ``CAIRN_DISPATCHER_INTERNAL_API`` env var and fully
@@ -193,9 +194,10 @@ class DispatcherLoop:
         try:
             from cairn.dispatcher.internal_api import start_internal_api
 
-            start_internal_api(self)
+            return start_internal_api(self)
         except Exception:  # pragma: no cover - defensive only
             LOG.warning("internal status API failed to initialize; dispatcher continues", exc_info=True)
+            return False
 
     def _dispatch_available(self, summaries: list[ProjectSummary]) -> None:
         if len(self.futures) >= self.config.runtime.max_workers:
@@ -939,6 +941,20 @@ class DispatcherLoop:
 
     def _run_startup_healthchecks(self, *, show_commands: bool) -> None:
         results = run_startup_healthchecks(self.config, self.container_manager, show_commands=show_commands)
+        self._mark_startup_unhealthy_workers(results)
         if any(result.ok for result in results):
             return
+        if self._internal_api_started:
+            LOG.warning(
+                "%s; dispatcher remains online so worker configuration can be inspected and repaired",
+                format_failure_summary(results),
+            )
+            return
         raise RuntimeError(format_failure_summary(results))
+
+    def _mark_startup_unhealthy_workers(self, results) -> None:
+        now = time.time()
+        for result in results:
+            if result.ok:
+                continue
+            self.worker_unhealthy_until[result.worker_name] = now + UNHEALTHY_RETRY_AFTER_SECONDS

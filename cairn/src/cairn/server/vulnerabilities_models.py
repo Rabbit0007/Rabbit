@@ -63,6 +63,18 @@ class VulnerabilityStatusUpdate(BaseModel):
     status: VulnerabilityStatus
 
 
+class VulnerabilityBatchStatusUpdate(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    status: VulnerabilityStatus
+
+
+class VulnerabilityBatchStatusResult(BaseModel):
+    count: int = 0
+    status: VulnerabilityStatus
+    ids: list[str] = Field(default_factory=list)
+    missing_ids: list[str] = Field(default_factory=list)
+
+
 class VulnerabilityExportRequest(BaseModel):
     """Parameters for a vulnerability export.
 
