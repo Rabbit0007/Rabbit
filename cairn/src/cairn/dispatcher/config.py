@@ -14,11 +14,6 @@ TaskType = Literal["reason", "explore", "bootstrap"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 CompletedAction = Literal["remove", "stop"]
 
-PI_PROVIDER_API_ALIASES: dict[str, str] = {
-    "openai": "openai-completions",
-    "openai-chat-completions": "openai-completions",
-}
-
 WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
     "claudecode": (
         "ANTHROPIC_MODEL",
@@ -156,20 +151,8 @@ class ContainerConfig(BaseModel):
     image: str
     network_mode: str
     completed_action: CompletedAction
-    name_prefix: str = "cairn-dispatch-"
-    startup_name_prefix: str = "cairn-startup-healthcheck-"
-    artifact_volume: str | None = None
-    artifact_host_path: str | None = None
-    artifact_mount_path: str = "/audit-data"
     cap_add: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_container_names(self) -> "ContainerConfig":
-        if not self.name_prefix.strip():
-            raise ValueError("name_prefix must not be empty")
-        if not self.startup_name_prefix.strip():
-            raise ValueError("startup_name_prefix must not be empty")
-        return self
+    name_prefix: str = Field(default="cairn-dispatch-", min_length=1)
 
 
 class RuntimeConfig(BaseModel):
@@ -208,9 +191,6 @@ class WorkerConfig(BaseModel):
         if missing:
             raise ValueError(f"worker {self.name} missing env keys: {', '.join(missing)}")
         if self.type == "pi":
-            provider_api = self.env.get("PI_PROVIDER_API")
-            if provider_api in PI_PROVIDER_API_ALIASES:
-                self.env["PI_PROVIDER_API"] = PI_PROVIDER_API_ALIASES[provider_api]
             _validate_optional_positive_int_env(self.name, self.env, "PI_MODEL_CONTEXT_WINDOW")
         if self.type == "mock":
             resolve_mock_behavior(self.name, self.env)
@@ -264,8 +244,6 @@ class DispatchConfig(BaseModel):
             raise ValueError("worker names must be unique")
         if not self.workers:
             raise ValueError("workers must not be empty")
-        if not any(worker.enabled for worker in self.workers):
-            raise ValueError("at least one worker must be enabled")
         if self.runtime.max_project_workers > self.runtime.max_workers:
             raise ValueError("max_project_workers cannot exceed max_workers")
         return self

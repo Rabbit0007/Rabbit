@@ -44,13 +44,18 @@ from cairn.server.vulnerability_extraction import (
 
 
 @pytest.fixture
-def vuln_app(temp_db) -> FastAPI:
+def vuln_app(temp_db, monkeypatch) -> FastAPI:
     """A minimal FastAPI app mounting only the vulnerabilities router.
 
     Depends on ``temp_db`` (from conftest) so the database is configured before
     the router's endpoints query it.
     """
     from cairn.server.routers import vulnerabilities
+
+    monkeypatch.setattr(
+        "cairn.server.report_composer_service._resolve_report_composer_profile",
+        lambda: None,
+    )
 
     app = FastAPI()
     app.include_router(vulnerabilities.router)
@@ -195,6 +200,51 @@ def test_extract_vulnerabilities_keeps_confirmed_unauthorized_api():
 
     assert len(extracted) == 1
     assert extracted[0].severity == "high"
+
+
+def test_extract_vulnerabilities_keeps_confirmed_cross_job_read():
+    """A confirmed cross-job read with concrete body evidence is reportable."""
+    description = (
+        "已确认跨作业未授权读取真实存在：请求 "
+        "https://yanglab.qd.sdu.edu.cn/trRosetta/output/TR198507/../TR198506/seq.fasta "
+        "返回 200，正文为 \"ATMNALAAN TER END\"，"
+        "证明攻击者无需认证即可读取他人作业结果。"
+    )
+
+    extracted = extract_vulnerabilities(description)
+
+    assert len(extracted) == 1
+    assert extracted[0].severity == "high"
+    assert any("seq.fasta" in item or "200" in item for item in extracted[0].evidence)
+
+
+def test_extract_vulnerabilities_keeps_confirmed_archive_disclosure():
+    """A confirmed archive download via traversal is preserved as a finding."""
+    description = (
+        "trRosetta 的 ../ 越权读取可直接命中结果归档包本身：访问 "
+        "https://yanglab.qd.sdu.edu.cn/trRosetta/output/TR198507/../TR198500/TR198500_results.tar.bz2 "
+        "返回 200、Content-Type: application/x-bzip2、长度 970509。"
+        "进一步解包确认归档内包含 model1.pdb、model2.pdb 与 seq.a3m，"
+        "证明越权读取链已可批量打包获取他人完整结果集。"
+    )
+
+    extracted = extract_vulnerabilities(description)
+
+    assert len(extracted) == 1
+    assert extracted[0].severity == "high"
+    assert any("Content-Type" in item or "解包确认" in item for item in extracted[0].evidence)
+
+
+def test_extract_vulnerabilities_still_ignores_unconfirmed_injection_candidate():
+    """A candidate injection path with 200 responses but no execution proof stays unconfirmed."""
+    description = (
+        "在保持合法 zip 主流程可达的前提下，将 payload 放入 email 与 zip 成员名后，"
+        "/cgi-bin/mTM-align/mTMalign_upload_tar.py 仍稳定返回 200 的正常提交页，"
+        "且对应结果页均可访问。尽管这些位置可进入主流程，但未观察到任何真实执行证据，"
+        "未发现 uid=、www-data、whoami、id 输出，也未出现异常副作用。"
+    )
+
+    assert extract_vulnerabilities(description) == []
 
 
 # ---------------------------------------------------------------------------
@@ -728,8 +778,38 @@ def test_export_markdown_content_and_scope(client, populated):
     assert "## 报告概览" in text
     assert "## 漏洞清单" in text
     assert "## 项目：Alpha（`p1`）" in text
+    assert "#### 漏洞概述" in text
+    assert "#### 漏洞证明" in text
+    assert "#### 影响结论" in text
+    assert "#### 成因分析" in text
+    assert "#### 修复建议" in text
     assert "未记录真实请求/响应数据包。" in text
     assert "Beta" not in text
+
+
+def test_vulnerability_report_endpoint_returns_structured_template_report(client, temp_db):
+    _insert_project("p1", "SQL Test")
+    _insert_fact("origin", "p1", "http://10.20.30.40/")
+    _insert_fact(
+        "f001",
+        "p1",
+        "确认存在 SQL 注入漏洞：GET /app/item?id=1 请求中，"
+        "id=1' UNION SELECT version(),user()--+ 可回显 MySQL 版本和 root@localhost 用户。",
+    )
+    scan_project_facts("p1")
+
+    vuln = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()[0]
+    resp = client.get(f"/api/vulnerabilities/{vuln['id']}/report")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["composer_source"] == "template"
+    assert body["project_id"] == "p1"
+    assert body["vulnerability_type"] == "SQL 注入"
+    assert body["attack_surface"]
+    assert any(point["label"] == "命中接口" for point in body["proof_points"])
+    assert "关键输入" in body["vulnerability_proof"] or "关键参数" in body["vulnerability_proof"]
+    assert body["remediation"]
 
 
 def test_export_pdf_content(client, populated):

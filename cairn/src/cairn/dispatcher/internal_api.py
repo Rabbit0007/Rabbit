@@ -40,7 +40,7 @@ import yaml
 from pydantic import ValidationError
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
-from cairn.dispatcher.runtime.startup_healthcheck import run_single_startup_healthcheck
+from cairn.dispatcher.runtime import startup_healthcheck as startup_healthcheck_runtime
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cairn.dispatcher.scheduler.loop import DispatcherLoop
@@ -124,6 +124,7 @@ def _is_secret_env_key(key: str) -> bool:
 
 def _worker_payload(worker: WorkerConfig) -> dict[str, Any]:
     payload = worker.model_dump(mode="json")
+    payload["enabled"] = _worker_enabled(worker)
     env: dict[str, str] = {}
     secret_keys: list[str] = []
     for key, value in worker.env.items():
@@ -135,6 +136,11 @@ def _worker_payload(worker: WorkerConfig) -> dict[str, Any]:
     payload["env"] = env
     payload["secret_env_keys"] = sorted(secret_keys)
     return payload
+
+
+def _worker_enabled(worker: WorkerConfig) -> bool:
+    enabled = getattr(worker, "enabled", True)
+    return bool(enabled)
 
 
 def _workers_config_payload(loop: "DispatcherLoop") -> dict[str, Any]:
@@ -258,6 +264,28 @@ def _healthcheck_payload(result: Any) -> dict[str, Any]:
     }
 
 
+def _run_single_startup_healthcheck_compat(
+    config: DispatchConfig,
+    container_manager,
+    worker: WorkerConfig,
+):
+    direct = getattr(startup_healthcheck_runtime, "run_single_startup_healthcheck", None)
+    if callable(direct):
+        return direct(config, container_manager, worker)
+
+    container_name = container_manager.create_startup_container()
+    try:
+        return startup_healthcheck_runtime._run_worker_healthcheck(  # type: ignore[attr-defined]
+            container_manager,
+            container_name,
+            worker,
+            config.runtime.healthcheck_timeout,
+        )
+    finally:
+        LOG.debug("removing single startup healthcheck container container=%s", container_name)
+        container_manager.remove_container(container_name, force=True)
+
+
 def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
     """Build a read-only snapshot dict of the dispatcher's live state.
 
@@ -295,9 +323,10 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
         running = running_counts.get(worker.name, 0)
         unhealthy_at = unhealthy_until.get(worker.name, 0.0)
         is_unhealthy = unhealthy_at > now
+        enabled = _worker_enabled(worker)
         if running > 0:
             status = "busy"
-        elif not worker.enabled:
+        elif not enabled:
             status = "disabled"
         elif is_unhealthy:
             status = "unhealthy"
@@ -307,7 +336,7 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
             {
                 "name": worker.name,
                 "type": worker.type,
-                "enabled": worker.enabled,
+                "enabled": enabled,
                 "task_types": list(worker.task_types),
                 "max_running": worker.max_running,
                 "priority": worker.priority,
@@ -448,7 +477,7 @@ def create_internal_app(loop: "DispatcherLoop"):
             raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
 
         try:
-            result = run_single_startup_healthcheck(config, loop.container_manager, worker)
+            result = _run_single_startup_healthcheck_compat(config, loop.container_manager, worker)
         except Exception as exc:
             LOG.warning("worker connectivity test failed before command execution worker=%s", worker.name, exc_info=True)
             return {

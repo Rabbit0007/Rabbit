@@ -21,7 +21,6 @@ from cairn.server.services import (
     validate_intent_creator_worker,
     validate_goal_not_in_sources,
 )
-from cairn.server.vulnerability_extraction import scan_project_facts
 
 router = APIRouter(tags=["intents"])
 
@@ -141,7 +140,6 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
             "SELECT * FROM intents WHERE id = ? AND project_id = ?",
             (intent_id, project_id),
         ).fetchone()
-        scan_project_facts(project_id, conn)
 
         return ConcludeResponse(
             fact=Fact(id=fid, description=body.description),

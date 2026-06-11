@@ -15,8 +15,12 @@ services:
       - "8000:8000"
     volumes:
       - ./datas/cairn/:/root/.local/share/cairn/
+      - ./dispatch.yaml:/cairn/dispatch.yaml:ro
+      - ./.rabbit:/cairn/.rabbit
     environment:
       CAIRN_DISPATCHER_INTERNAL_URL: "http://rabbit-pentest-dispatcher:8989"
+      CAIRN_REPORT_COMPOSER_CONFIG_PATH: "/cairn/dispatch.yaml"
+      CAIRN_PROJECT_CONTEXT_ROOT: "/cairn/.rabbit/context"
       # Timeout (seconds) for the longer-running worker connectivity test and
       # config read/write proxy calls to the dispatcher internal API. Independent
       # of CAIRN_DISPATCHER_INTERNAL_TIMEOUT (status polling, default 2.0s).
@@ -41,11 +45,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./dispatch.yaml:/cairn/dispatch.yaml
+      - ./.rabbit:/cairn/.rabbit:ro
       - rabbit-pentest-artifacts:/audit-data
     environment:
       CAIRN_DISPATCHER_INTERNAL_API: "1"
       CAIRN_DISPATCHER_INTERNAL_HOST: "0.0.0.0"
       CAIRN_DISPATCHER_INTERNAL_PORT: "8989"
+      CAIRN_PROJECT_CONTEXT_ROOT: "/cairn/.rabbit/context"
     depends_on:
       pentest-server:
         condition: service_healthy

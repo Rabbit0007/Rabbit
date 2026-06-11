@@ -1,0 +1,11 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_025
+  target_summary: http://101.76.224.20/
+  goal: 获取到服务器权限webshell
+  notes: ''
+override:
+  authorization: {}
+  scope: {}
+  output: {}

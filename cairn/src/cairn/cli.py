@@ -62,6 +62,9 @@ def dispatch(config_path: Path, once: bool, startup_healthcheck_only: bool, log_
         if startup_healthcheck_only:
             loop.run_startup_healthchecks_only()
             return
+        from cairn.dispatcher.internal_api import start_internal_api
+
+        start_internal_api(loop)
         loop.run(once=once)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc

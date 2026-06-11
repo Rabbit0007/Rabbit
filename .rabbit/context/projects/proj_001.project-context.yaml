@@ -1,0 +1,11 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_001
+  target_summary: origin fact
+  goal: goal fact
+  notes: ''
+override:
+  authorization: {}
+  scope: {}
+  output: {}

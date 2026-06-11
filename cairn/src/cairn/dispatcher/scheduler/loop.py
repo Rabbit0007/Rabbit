@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
-from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import requests
 
@@ -37,7 +34,6 @@ class WorkerSelection:
     blocked_unhealthy: list[str]
     blocked_rejected: list[str]
     blocked_task_type: list[str]
-    blocked_disabled: list[str]
 
 
 class DispatcherLoop:
@@ -60,73 +56,6 @@ class DispatcherLoop:
         self.project_cursor = 0
         self._settings_checked = False
         self._startup_healthchecks_checked = False
-        self._internal_api_started = False
-        self._config_lock = threading.RLock()
-        # Optional, default-off task-history ring buffer for the read-only
-        # internal status API. When ``None`` (the default), no history is
-        # recorded and the scheduler behaves exactly as before. It is only
-        # enabled via ``enable_internal_state_tracking`` when the opt-in
-        # internal API is started.
-        self.task_history: deque[dict[str, Any]] | None = None
-
-    def apply_config(self, config: DispatchConfig) -> None:
-        """Apply a validated dispatcher config for future scheduling decisions.
-
-        Existing tasks keep running with the worker/env snapshot they were
-        started with. New scheduling decisions read ``self.config.workers``, so
-        replacing the config object is enough to pick up added/edited workers
-        without touching active futures or the task execution path.
-        """
-        with self._config_lock:
-            worker_names = {worker.name for worker in config.workers if worker.enabled}
-            self.config = config
-            for worker_name in list(self.worker_unhealthy_until):
-                if worker_name not in worker_names:
-                    self.worker_unhealthy_until.pop(worker_name, None)
-            for key in list(self.worker_rejected_until):
-                if key[2] not in worker_names:
-                    self.worker_rejected_until.pop(key, None)
-
-    def enable_internal_state_tracking(self, history_size: int = 200) -> None:
-        """Enable the optional read-only task-history buffer.
-
-        Strictly additive: this only allocates a bounded ``deque`` that
-        ``_reap_futures`` appends to when present. It never alters scheduling
-        decisions. Safe to call multiple times (idempotent unless the size
-        changes).
-        """
-        if history_size <= 0:
-            return
-        if self.task_history is None or self.task_history.maxlen != history_size:
-            self.task_history = deque(self.task_history or (), maxlen=history_size)
-
-    def _record_task_history(self, task: RunningTask, outcome: str) -> None:
-        """Append a completed-task record to the optional history buffer.
-
-        No-op unless ``enable_internal_state_tracking`` has been called. Wrapped
-        so that any failure here can never disrupt future reaping.
-        """
-        history = self.task_history
-        if history is None:
-            return
-        try:
-            now = time.time()
-            started_at = getattr(task, "started_at", None)
-            duration = round(max(0.0, now - started_at), 3) if isinstance(started_at, (int, float)) else None
-            history.append(
-                {
-                    "project_id": task.project_id,
-                    "task_type": task.task_type,
-                    "worker_name": task.worker_name,
-                    "intent_id": task.intent_id,
-                    "outcome": outcome,
-                    "started_at": started_at,
-                    "completed_at": now,
-                    "duration_seconds": duration,
-                }
-            )
-        except Exception:  # pragma: no cover - defensive only
-            LOG.debug("failed to record task history", exc_info=True)
 
     def close(self) -> None:
         if self.futures:
@@ -142,7 +71,6 @@ class DispatcherLoop:
 
     def run(self, once: bool = False) -> None:
         try:
-            self._internal_api_started = self._maybe_start_internal_api()
             self.run_startup_healthchecks()
             while True:
                 try:
@@ -184,20 +112,6 @@ class DispatcherLoop:
             return
         self._run_startup_healthchecks(show_commands=show_commands)
         self._startup_healthchecks_checked = True
-
-    def _maybe_start_internal_api(self) -> bool:
-        """Optionally start the internal API.
-
-        Opt-in via the ``CAIRN_DISPATCHER_INTERNAL_API`` env var and fully
-        non-fatal: any failure is swallowed so the scheduler keeps running.
-        """
-        try:
-            from cairn.dispatcher.internal_api import start_internal_api
-
-            return start_internal_api(self)
-        except Exception:  # pragma: no cover - defensive only
-            LOG.warning("internal status API failed to initialize; dispatcher continues", exc_info=True)
-            return False
 
     def _dispatch_available(self, summaries: list[ProjectSummary]) -> None:
         if len(self.futures) >= self.config.runtime.max_workers:
@@ -558,13 +472,9 @@ class DispatcherLoop:
         blocked_unhealthy: list[str] = []
         blocked_rejected: list[str] = []
         blocked_task_type: list[str] = []
-        blocked_disabled: list[str] = []
         running_counts = self._worker_counts()
-        with self._config_lock:
-            workers = list(self.config.workers)
-        for worker in workers:
-            if not worker.enabled:
-                blocked_disabled.append(worker.name)
+        for worker in self.config.workers:
+            if not getattr(worker, "enabled", True):
                 continue
             if task_type not in worker.task_types:
                 blocked_task_type.append(worker.name)
@@ -584,14 +494,13 @@ class DispatcherLoop:
             candidates.append(worker)
         if not candidates:
             LOG.debug(
-                "worker selection project=%s task=%s no candidates blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s blocked_disabled=%s",
+                "worker selection project=%s task=%s no candidates blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s",
                 project_id,
                 task_type,
                 blocked_busy,
                 blocked_unhealthy,
                 blocked_rejected,
                 blocked_task_type,
-                blocked_disabled,
             )
             return WorkerSelection(
                 worker=None,
@@ -599,11 +508,10 @@ class DispatcherLoop:
                 blocked_unhealthy=blocked_unhealthy,
                 blocked_rejected=blocked_rejected,
                 blocked_task_type=blocked_task_type,
-                blocked_disabled=blocked_disabled,
             )
         ordered = choose_worker(candidates, running_counts)
         LOG.debug(
-            "worker selection project=%s task=%s candidates=%s blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s blocked_disabled=%s chosen=%s",
+            "worker selection project=%s task=%s candidates=%s blocked_busy=%s blocked_unhealthy=%s blocked_rejected=%s blocked_task_type=%s chosen=%s",
             project_id,
             task_type,
             [f"{worker.name}({running_counts.get(worker.name, 0)}/{worker.max_running},p{worker.priority})" for worker in candidates],
@@ -611,7 +519,6 @@ class DispatcherLoop:
             blocked_unhealthy,
             blocked_rejected,
             blocked_task_type,
-            blocked_disabled,
             ordered[0].name if ordered else None,
         )
         return WorkerSelection(
@@ -620,7 +527,6 @@ class DispatcherLoop:
             blocked_unhealthy=blocked_unhealthy,
             blocked_rejected=blocked_rejected,
             blocked_task_type=blocked_task_type,
-            blocked_disabled=blocked_disabled,
         )
 
     def _worker_counts(self) -> dict[str, int]:
@@ -733,7 +639,6 @@ class DispatcherLoop:
             task = self.futures.pop(future)
             try:
                 outcome = future.result()
-                self._record_task_history(task, outcome)
                 if outcome == "cancelled":
                     LOG.info(
                         "task cancelled project=%s task=%s worker=%s",
@@ -941,20 +846,6 @@ class DispatcherLoop:
 
     def _run_startup_healthchecks(self, *, show_commands: bool) -> None:
         results = run_startup_healthchecks(self.config, self.container_manager, show_commands=show_commands)
-        self._mark_startup_unhealthy_workers(results)
         if any(result.ok for result in results):
             return
-        if self._internal_api_started:
-            LOG.warning(
-                "%s; dispatcher remains online so worker configuration can be inspected and repaired",
-                format_failure_summary(results),
-            )
-            return
         raise RuntimeError(format_failure_summary(results))
-
-    def _mark_startup_unhealthy_workers(self, results) -> None:
-        now = time.time()
-        for result in results:
-            if result.ok:
-                continue
-            self.worker_unhealthy_until[result.worker_name] = now + UNHEALTHY_RETRY_AFTER_SECONDS

@@ -29,6 +29,12 @@ from datetime import datetime, timezone
 
 from cairn.server.activity_service import record_audit, record_notification
 from cairn.server.db import get_conn
+from cairn.server.report_composer_models import VulnerabilityNarrativeReport
+from cairn.server.report_composer_service import (
+    compose_vulnerability_report,
+    render_narrative_markdown,
+    render_narrative_plain_lines,
+)
 from cairn.server.vulnerabilities_models import (
     ExportRecord,
     Severity,
@@ -689,6 +695,27 @@ def vulnerabilities_summary() -> VulnerabilitySummary:
     return VulnerabilitySummary(**counts)
 
 
+@router.get("/{vulnerability_id}/report", response_model=VulnerabilityNarrativeReport)
+def vulnerability_report(
+    vulnerability_id: str,
+    use_model: bool = Query(False),
+) -> VulnerabilityNarrativeReport:
+    """Generate a read-only delivery-grade report draft for one vulnerability.
+
+    This endpoint does not mutate vulnerability state. It composes a structured
+    report from the already-merged vulnerability plus its related facts and
+    proof data, and it may optionally ask the dedicated report model to polish
+    the narrative. If the model is unavailable, the deterministic template
+    version is returned.
+    """
+    vulnerabilities = _query_filtered_vulnerabilities(
+        None,
+        None,
+        vulnerability_id=vulnerability_id,
+    )
+    return compose_vulnerability_report(vulnerabilities[0], use_model=use_model)
+
+
 # Columns emitted, in order, for each vulnerability in a CSV export. Mirrors the
 # fields required by requirement 8.2 (severity, title, description, project name,
 # discovery date).
@@ -906,6 +933,7 @@ def _render_markdown_export(vulnerabilities: list[Vulnerability]) -> str:
     for project_id, project_name, items in _project_groups(vulnerabilities):
         lines.extend(["---", "", f"## 项目：{project_name}（`{project_id}`）", ""])
         for index, vuln in enumerate(items, start=1):
+            composed = compose_vulnerability_report(vuln, use_model=False)
             lines.extend(
                 [
                     f"### {index}. {vuln.title}",
@@ -921,17 +949,9 @@ def _render_markdown_export(vulnerabilities: list[Vulnerability]) -> str:
                     f"| 工作节点 | {_md_escape(vuln.source_worker or '未记录')} |",
                     f"| 发现时间 | {_md_escape(vuln.discovered_at)} |",
                     "",
-                    "#### 漏洞描述",
-                    "",
-                    vuln.description or "未记录",
-                    "",
-                    "#### 关键证据",
-                    "",
                 ]
             )
-            for evidence in vuln.evidence or ["未记录"]:
-                lines.append(f"- {evidence}")
-            lines.append("")
+            lines.extend(render_narrative_markdown(composed))
 
             lines.extend(["#### 漏洞证明数据包", ""])
             packets = vuln.proof_packets or []
@@ -1165,6 +1185,7 @@ def _report_plain_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
     for project_id, project_name, items in _project_groups(vulnerabilities):
         lines.extend([f"项目：{project_name}（{project_id}）", "-" * 72])
         for index, vuln in enumerate(items, start=1):
+            composed = compose_vulnerability_report(vuln, use_model=False)
             lines.extend(
                 [
                     f"{index}. {vuln.title}",
@@ -1172,13 +1193,9 @@ def _report_plain_lines(vulnerabilities: list[Vulnerability]) -> list[str]:
                     f"确认事实：{vuln.fact_id}",
                     f"关联事实：{', '.join(vuln.related_fact_ids or [vuln.fact_id])}",
                     f"发现时间：{vuln.discovered_at}",
-                    "漏洞描述：",
-                    vuln.description,
-                    "关键证据：",
                 ]
             )
-            for evidence in vuln.evidence or ["未记录"]:
-                lines.append(f"- {evidence}")
+            lines.extend(render_narrative_plain_lines(composed))
             lines.append("漏洞证明数据包：")
             packets = vuln.proof_packets or []
             if not packets:

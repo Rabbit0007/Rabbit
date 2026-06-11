@@ -32,7 +32,7 @@ def run_startup_healthchecks(
     show_commands: bool = False,
 ) -> list[StartupHealthcheckResult]:
     container_name = container_manager.create_startup_container()
-    workers = [worker for worker in config.workers if worker.enabled]
+    workers = [worker for worker in config.workers if getattr(worker, "enabled", True)]
     parallelism = max(1, min(len(workers), config.runtime.max_workers, 8))
     LOG.info(
         "[*] Startup healthcheck: workers=%s parallelism=%s",
@@ -78,30 +78,6 @@ def run_startup_healthchecks(
     return results
 
 
-def run_single_startup_healthcheck(
-    config: DispatchConfig,
-    container_manager: ContainerManager,
-    worker: WorkerConfig,
-) -> StartupHealthcheckResult:
-    """Run the same startup connectivity check for one worker.
-
-    Used by the runtime worker-config UI. It intentionally reuses the existing
-    startup container healthcheck path so a successful test means the worker can
-    run from the same container environment the dispatcher uses.
-    """
-    container_name = container_manager.create_startup_container()
-    try:
-        return _run_worker_healthcheck(
-            container_manager,
-            container_name,
-            worker,
-            config.runtime.healthcheck_timeout,
-        )
-    finally:
-        LOG.debug("removing single startup healthcheck container container=%s", container_name)
-        container_manager.remove_container(container_name, force=True)
-
-
 def format_failure_summary(results: list[StartupHealthcheckResult]) -> str:
     failed = [result for result in results if not result.ok]
     if not failed:
@@ -131,17 +107,14 @@ def _run_worker_healthcheck(
     )
     result = healthcheck.result
     http_status, response_preview = _parse_stdout(result.stdout)
-    healthcheck_error = driver.healthcheck_error(result.returncode, result.stdout, result.stderr)
-    if healthcheck_error is not None:
-        response_preview = _preview(healthcheck_error)
     return StartupHealthcheckResult(
         worker_name=worker.name,
-        ok=healthcheck_error is None,
+        ok=result.returncode == 0,
         returncode=result.returncode,
         duration_ms=healthcheck.duration_ms,
         http_status=http_status,
         response_preview=response_preview,
-        stderr_preview=_preview(healthcheck_error or result.stderr),
+        stderr_preview=_preview(result.stderr),
         command=driver.describe_startup_healthcheck(worker),
     )
 

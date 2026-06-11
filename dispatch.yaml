@@ -1,8 +1,8 @@
 server: http://rabbit-pentest-server:8000
 runtime:
-  max_workers: 8
+  max_workers: 2
   max_running_projects: 3
-  max_project_workers: 4
+  max_project_workers: 2
   interval: 3
   healthcheck_timeout: 20
   prompt_group: default
@@ -18,28 +18,16 @@ tasks:
     conclude_timeout: 90
 container:
   image: ghcr.io/oritera/cairn-worker-container:latest
-  network_mode: rabbit-pentest-net
+  network_mode: host
   completed_action: stop
-  name_prefix: rabbit-pentest-dispatch-
-  startup_name_prefix: rabbit-pentest-startup-healthcheck-
-  artifact_volume: null
-  artifact_host_path: /Users/rabbit/Desktop/Rabbit/datas/cairn
-  artifact_mount_path: /audit-data
   cap_add: []
+  name_prefix: cairn-021-dispatch-
 common_env:
   TSEC_SERVER_HOST: 10.0.0.44:8000
   TSEC_AGENT_TOKEN: xxx
-  HTTP_PROXY: http://host.docker.internal:18888
-  HTTPS_PROXY: http://host.docker.internal:18888
-  ALL_PROXY: http://host.docker.internal:18888
-  http_proxy: http://host.docker.internal:18888
-  https_proxy: http://host.docker.internal:18888
-  all_proxy: http://host.docker.internal:18888
-  NO_PROXY: localhost,127.0.0.1,host.docker.internal,rabbit-pentest-server,rabbit-pentest-dispatcher
-  no_proxy: localhost,127.0.0.1,host.docker.internal,rabbit-pentest-server,rabbit-pentest-dispatcher
 workers:
-- name: claudecode_deepseek-v4-pro
-  type: claudecode
+- name: codex_gpt-5.5_1
+  type: codex
   enabled: false
   task_types:
   - bootstrap
@@ -50,11 +38,11 @@ workers:
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    ANTHROPIC_MODEL: deepseek-v4-pro
-    ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-    ANTHROPIC_AUTH_TOKEN: sk-6fe8e73dc03247a4a6a102353bd9a009
-- name: claudecode_deepseek-v4-pro-2
-  type: claudecode
+    CODEX_MODEL: gpt-5.5
+    CODEX_BASE_URL: https://vsllm.com/v1
+    OPENAI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
+- name: codex_gpt-5.5_2
+  type: codex
   enabled: false
   task_types:
   - bootstrap
@@ -65,11 +53,11 @@ workers:
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    ANTHROPIC_MODEL: deepseek-v4-pro
-    ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-    ANTHROPIC_AUTH_TOKEN: sk-6fe8e73dc03247a4a6a102353bd9a009
-- name: claudecode_deepseek-v4-pro-3
-  type: claudecode
+    CODEX_MODEL: gpt-5.5
+    CODEX_BASE_URL: https://vsllm.com/v1
+    OPENAI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
+- name: codex_gpt-5.5_3
+  type: codex
   enabled: false
   task_types:
   - bootstrap
@@ -80,105 +68,9 @@ workers:
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    ANTHROPIC_MODEL: deepseek-v4-pro
-    ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
-    ANTHROPIC_AUTH_TOKEN: sk-6fe8e73dc03247a4a6a102353bd9a009
-- name: worker_deepseekv4_local
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 2
-  priority: 0
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseekv4
-    PI_BASE_URL: http://10.2.8.77:3000/v1
-    PI_API_KEY: sk-c8I3u5nHDsQpnMsT737071E106E34076A9B9140964Ac13B1
-    PI_PROVIDER_API: openai-completions
-- name: worker_deepseekv4_local-2
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 2
-  priority: 1
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseekv4
-    PI_BASE_URL: http://10.2.8.77:3000/v1
-    PI_API_KEY: sk-c8I3u5nHDsQpnMsT737071E106E34076A9B9140964Ac13B1
-    PI_PROVIDER_API: openai-completions
-- name: worker_deepseekv4_local-3
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 2
-  priority: 2
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseekv4
-    PI_BASE_URL: http://10.2.8.77:3000/v1
-    PI_API_KEY: sk-c8I3u5nHDsQpnMsT737071E106E34076A9B9140964Ac13B1
-    PI_PROVIDER_API: openai-completions
-- name: chat5.5-1
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 0
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: gpt-5.5
-    PI_BASE_URL: https://vsllm.com/v1
-    PI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
-    PI_PROVIDER_API: openai-completions
-- name: chat5.5-2
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 1
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: gpt-5.5
-    PI_BASE_URL: https://vsllm.com/v1
-    PI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
-    PI_PROVIDER_API: openai-completions
-- name: chat5.5-3
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 2
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: gpt-5.5
-    PI_BASE_URL: https://vsllm.com/v1
-    PI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
-    PI_PROVIDER_API: openai-completions
+    CODEX_MODEL: gpt-5.5
+    CODEX_BASE_URL: https://vsllm.com/v1
+    OPENAI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
 - name: deepseek-v4-pro-1
   type: pi
   enabled: true

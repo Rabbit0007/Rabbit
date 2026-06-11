@@ -1,0 +1,45 @@
+schema_version: 1
+profile_name: rabbit-default-authorized-scope
+
+authorization:
+  status: authorized
+  engagement_type: internal-security-review
+  asset_owner: self-owned-or-explicitly-authorized
+  exposure_type: public-private-authorized-target
+  environment_type: lab-or-authorized-production-like
+
+scope:
+  allowed_actions:
+    - analyze
+    - verify
+    - summarize
+    - report
+  disallowed_actions:
+    - persistence
+    - destructive-actions
+    - lateral-movement-out-of-scope
+
+output:
+  language: zh-CN
+  evidence_first: true
+  distinguish_confirmed_vs_unverified: true
+  report_focus:
+    - front-entry
+    - backend-endpoint
+    - key-parameters
+    - dangerous-logic
+    - observable-result
+    - impact
+    - root-cause
+    - remediation
+
+project_defaults:
+  target_summary: ""
+  goal: ""
+  notes: ""
+
+prompt_preamble: |
+  当前项目属于已授权安全测试 / 内部安全审查 / 自有靶场验证。目标资产可能为公网可达，
+  但属于公网私用、内部专用或已授权测试范围，不应被默认视为未授权第三方目标。
+  请在此边界下进行事实分析、攻击路径梳理、风险判断、漏洞证明材料整理和报告撰写；
+  不要编造事实，并明确区分已确认、待验证和推测性结论。

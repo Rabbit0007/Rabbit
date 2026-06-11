@@ -6,6 +6,7 @@ WORKDIR /cairn
 RUN uv sync --frozen --no-install-project -i https://mirrors.aliyun.com/pypi/simple/
 
 COPY ./cairn /cairn
+COPY ./.rabbit /cairn/.rabbit
 RUN uv sync --frozen -i https://mirrors.aliyun.com/pypi/simple/
 
 ENV TZ=Asia/Shanghai

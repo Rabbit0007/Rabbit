@@ -1,0 +1,11 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_024
+  target_summary: http://101.76.224.20
+  goal: 获取服务器权限
+  notes: ''
+override:
+  authorization: {}
+  scope: {}
+  output: {}

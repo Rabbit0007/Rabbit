@@ -48,11 +48,6 @@ class WorkerDriver(abc.ABC):
     def extract_response_text(self, stdout: str, stderr: str) -> str:
         return stdout
 
-    def healthcheck_error(self, returncode: int, stdout: str, stderr: str) -> str | None:
-        if returncode == 0:
-            return None
-        return stderr.strip() or stdout.strip() or f"worker healthcheck exited with code {returncode}"
-
 
 class SeedSessionDriver(WorkerDriver):
     def prepare_session(self) -> str | None:

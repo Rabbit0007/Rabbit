@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
+import elk from "cytoscape-elk";
+import klay from "cytoscape-klay";
 import {
   Activity,
   AlertCircle,
@@ -78,6 +80,8 @@ import {
 
 try {
   cytoscape.use(dagre);
+  cytoscape.use(elk);
+  cytoscape.use(klay);
 } catch {
   // Vite HMR may register the extension more than once.
 }
@@ -1355,6 +1359,8 @@ function DashboardPage({ runAction, setToast }) {
 
 function ProjectsPage({ runAction, setToast, confirmAction }) {
   const [projects, setProjects] = useState([]);
+  const [campaignByProjectId, setCampaignByProjectId] = useState({});
+  const [campaignLoadingByProjectId, setCampaignLoadingByProjectId] = useState({});
   const [loading, setLoading] = useState(true);
   const [newOpen, setNewOpen] = useState(false);
   const [reopenTarget, setReopenTarget] = useState(null);
@@ -1366,6 +1372,8 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      setCampaignByProjectId({});
+      setCampaignLoadingByProjectId({});
       setProjects(await apiRequest("/projects"));
     } catch (error) {
       setToast({ type: "danger", message: error.message || "项目加载失败" });
@@ -1409,6 +1417,52 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
     const start = (page - 1) * pageSize;
     return filteredProjects.slice(start, start + pageSize);
   }, [filteredProjects, page, pageSize]);
+
+  useEffect(() => {
+    const missingProjects = visibleProjects.filter(
+      (project) => campaignByProjectId[project.id] === undefined && !campaignLoadingByProjectId[project.id],
+    );
+    if (!missingProjects.length) return undefined;
+
+    let cancelled = false;
+    const ids = missingProjects.map((project) => project.id);
+    setCampaignLoadingByProjectId((current) => ({
+      ...current,
+      ...Object.fromEntries(ids.map((id) => [id, true])),
+    }));
+
+    Promise.all(
+      missingProjects.map(async (project) => {
+        try {
+          const campaign = await apiRequest(`/api/projects/${project.id}/campaign`);
+          return [project.id, campaign];
+        } catch {
+          return [project.id, null];
+        }
+      }),
+    )
+      .then((entries) => {
+        if (cancelled) return;
+        setCampaignByProjectId((current) => ({
+          ...current,
+          ...Object.fromEntries(entries),
+        }));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setCampaignLoadingByProjectId((current) => {
+          const next = { ...current };
+          ids.forEach((id) => {
+            delete next[id];
+          });
+          return next;
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleProjects, campaignByProjectId, campaignLoadingByProjectId]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
@@ -1561,6 +1615,8 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
               <ProjectCard
                 key={project.id}
                 project={project}
+                campaign={campaignByProjectId[project.id]}
+                campaignLoading={Boolean(campaignLoadingByProjectId[project.id])}
                 onDelete={() => deleteProject(project)}
                 onStop={() => updateStatus(project, "stopped")}
                 onStart={() => updateStatus(project, "active")}
@@ -1637,7 +1693,7 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
   );
 }
 
-function ProjectCard({ project, onDelete, onStop, onStart, onReopen }) {
+function ProjectCard({ project, campaign, campaignLoading, onDelete, onStop, onStart, onReopen }) {
   const statusMeta =
     {
       active: { label: "运行中", tone: "success" },
@@ -1724,6 +1780,7 @@ function ProjectCard({ project, onDelete, onStop, onStart, onReopen }) {
           <strong>未设置</strong>
         </div>
       </div>
+      <ProjectCampaignPreview campaign={campaign} loading={campaignLoading} />
       {project.reason && (
         <div className="reason-strip project-reason-strip">
           <Activity size={16} />
@@ -1760,6 +1817,59 @@ function ProjectCard({ project, onDelete, onStop, onStart, onReopen }) {
         </button>
       </div>
     </article>
+  );
+}
+
+function ProjectCampaignPreview({ campaign, loading }) {
+  if (loading) {
+    return (
+      <section className="project-briefing loading" aria-live="polite">
+        <div className="project-briefing-head">
+          <span className="project-briefing-kicker">主线态势</span>
+          <span className="project-briefing-loading">
+            <Loader2 size={13} className="spin" />
+            正在汇总
+          </span>
+        </div>
+        <p className="project-briefing-lead">正在生成当前项目的主线摘要。</p>
+      </section>
+    );
+  }
+
+  if (!campaign) {
+    return (
+      <section className="project-briefing empty">
+        <div className="project-briefing-head">
+          <span className="project-briefing-kicker">主线态势</span>
+          <Badge tone="muted">暂不可用</Badge>
+        </div>
+        <p className="project-briefing-lead">当前项目还没有形成稳定的项目级主线摘要。</p>
+      </section>
+    );
+  }
+
+  const goalMeta = campaignGoalMeta(campaign.goal_status);
+
+  return (
+    <section className="project-briefing">
+      <div className="project-briefing-head">
+        <span className="project-briefing-kicker">主线态势</span>
+        <div className="project-briefing-badges">
+          <Badge tone={goalMeta.tone}>{goalMeta.label}</Badge>
+          {campaign.counts.high_value_vulnerabilities > 0 && (
+            <span className="project-briefing-chip">{campaign.counts.high_value_vulnerabilities} 个高价值</span>
+          )}
+        </div>
+      </div>
+      <p className="project-briefing-lead" title={campaign.lead}>
+        {campaign.lead}
+      </p>
+      <div className="project-briefing-meta">
+        <span>开放意图 {campaign.counts.open_intents}</span>
+        <span>阻塞 {campaign.blockers.length}</span>
+        <span>下一步 {campaign.next_steps.length}</span>
+      </div>
+    </section>
   );
 }
 
@@ -1845,22 +1955,26 @@ function NewProjectModal({ onClose, onCreated, runAction, initial = null }) {
 
 function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
   const [detail, setDetail] = useState(null);
+  const [campaign, setCampaign] = useState(null);
   const [timeline, setTimeline] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState("details");
   const [modal, setModal] = useState(null);
-  const [layout, setLayout] = useState("dagre");
+  const [layout, setLayout] = useState("dagre_tb");
 
   const load = useCallback(async () => {
     try {
-      const [project, events] = await Promise.all([
+      const [project, events, synthesis] = await Promise.all([
         apiRequest(`/projects/${projectId}`),
         apiRequest(`/api/projects/${projectId}/timeline`).catch(() => []),
+        apiRequest(`/api/projects/${projectId}/campaign`).catch(() => null),
       ]);
       setDetail(project);
       setTimeline(events);
+      setCampaign(synthesis);
     } catch (error) {
+      setCampaign(null);
       setToast({ type: "danger", message: error.message || "项目加载失败" });
     } finally {
       setLoading(false);
@@ -2000,10 +2114,12 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
         <div className="graph-panel">
           <div className="graph-toolbar floating">
             <select value={layout} onChange={(event) => setLayout(event.target.value)}>
-              <option value="dagre">Dagre</option>
-              <option value="breadthfirst">层级</option>
-              <option value="circle">环形</option>
-              <option value="grid">网格</option>
+              <option value="dagre_tb">Dagre ↓</option>
+              <option value="dagre_lr">Dagre →</option>
+              <option value="klay_tb">Klay ↓</option>
+              <option value="klay_lr">Klay →</option>
+              <option value="elk_tb">ELK ↓</option>
+              <option value="elk_lr">ELK →</option>
             </select>
           </div>
           <div className="graph-actions floating right">
@@ -2033,6 +2149,7 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
         </div>
         <Inspector
           detail={detail}
+          campaign={campaign}
           selected={selected}
           setSelected={setSelected}
           tab={tab}
@@ -2142,37 +2259,174 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   const cyRef = useRef(null);
 
   const elements = useMemo(() => {
-    const compactLabel = (value, length = 72) => clampText(String(value || ""), length);
-    const nodes = detail.facts.map((fact) => ({
-      data: {
-        id: fact.id,
-        label: fact.id === "origin" ? "起点" : fact.id === "goal" ? "目标" : `${fact.id}: ${compactLabel(fact.description)}`,
-      },
-      classes: cn("fact-node", fact.id),
-    }));
-    const intentNodes = detail.intents.map((intent) => ({
-      data: {
-        id: intent.id,
-        label: `${intent.id}: ${compactLabel(intent.description)}`,
-      },
-      classes: cn("intent-node", intent.to ? "done" : intent.worker ? "claimed" : "open"),
-    }));
+    const isBootstrapIntent = (intent) =>
+      Boolean(
+        intent &&
+          intent.description === "bootstrap" &&
+          intent.creator === "dispatcher.bootstrap" &&
+          Array.isArray(intent.from) &&
+          intent.from.length === 1 &&
+          intent.from[0] === "origin" &&
+          intent.to === null,
+      );
+
+    const estimateLabelCharWidth = (char, fontSize) => {
+      if (/\s/.test(char)) return fontSize * 0.35;
+      if (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(char)) {
+        return fontSize * 1.0;
+      }
+      return fontSize * 0.58;
+    };
+
+    const measureWrappedText = (text, maxWidth, fontSize) => {
+      const content = (text || "").trim() || " ";
+      const lines = [];
+      let currentWidth = 0;
+      let currentChars = 0;
+      let maxLineWidth = 0;
+
+      const pushLine = () => {
+        if (currentChars === 0 && lines.length > 0) lines.push(0);
+        else if (currentChars > 0) lines.push(currentWidth);
+        maxLineWidth = Math.max(maxLineWidth, currentWidth);
+        currentWidth = 0;
+        currentChars = 0;
+      };
+
+      for (const char of Array.from(content)) {
+        if (char === "\n") {
+          pushLine();
+          continue;
+        }
+        const charWidth = estimateLabelCharWidth(char, fontSize);
+        if (currentChars > 0 && currentWidth + charWidth > maxWidth) pushLine();
+        currentWidth += charWidth;
+        currentChars += 1;
+      }
+
+      pushLine();
+
+      const lineCount = Math.max(1, lines.length);
+      const lineHeight = fontSize * 1.35;
+      return {
+        width: Math.min(maxWidth, Math.max(fontSize * 1.6, maxLineWidth)),
+        height: lineCount * lineHeight,
+      };
+    };
+
+    const factNodeSize = (label, nodeType) => {
+      const preset =
+        nodeType === "fact"
+          ? { fontSize: 10, maxTextWidth: 116, minWidth: 52, minHeight: 34, paddingX: 10, paddingY: 10 }
+          : { fontSize: 11, maxTextWidth: 92, minWidth: 58, minHeight: 38, paddingX: 10, paddingY: 10 };
+      const measured = measureWrappedText(label, preset.maxTextWidth, preset.fontSize);
+      return {
+        width: Math.max(preset.minWidth, Math.ceil(measured.width + preset.paddingX * 2)),
+        height: Math.max(preset.minHeight, Math.ceil(measured.height + preset.paddingY * 2)),
+      };
+    };
+
+    const summarizeFactLabel = (fact) => {
+      if (fact.id === "origin") return "Origin";
+      if (fact.id === "goal") return "Goal";
+      const normalized = String(fact.description || "").replace(/\s+/g, " ").trim();
+      const chars = Array.from(normalized);
+      if (chars.length <= 24) return normalized || fact.id;
+      return `${chars.slice(0, 24).join("")}…`;
+    };
+
+    const openIntentNodeType = (intent) => {
+      if (isBootstrapIntent(intent)) return intent.worker ? "bootstrap_running" : "bootstrap_pending";
+      return intent.worker ? "in_progress" : "unclaimed";
+    };
+
+    const openIntentNodeLabel = (intent) => (isBootstrapIntent(intent) ? "Bootstrap" : "?");
+
+    const openIntentNodeSize = (intent) => {
+      if (isBootstrapIntent(intent)) return { width: 82, height: 30 };
+      return { width: 22, height: 22 };
+    };
+
+    const nodes = detail.facts.map((fact) => {
+      const nodeType = fact.id === "origin" ? "origin" : fact.id === "goal" ? "goal" : "fact";
+      const label = summarizeFactLabel(fact);
+      const size = factNodeSize(label, nodeType);
+      return {
+        data: {
+          id: fact.id,
+          label,
+          description: fact.description,
+          nodeType,
+          width: size.width,
+          height: size.height,
+        },
+      };
+    });
+
     const edges = [];
     detail.intents.forEach((intent) => {
+      const label = intent.description || "";
       (intent.from || []).forEach((source) => {
+        if (intent.to) {
+          edges.push({
+            data: {
+              id: `${intent.id}_${source}`,
+              source,
+              target: intent.to,
+              intentId: intent.id,
+              label,
+              status: "concluded",
+            },
+          });
+          return;
+        }
+
+        const phId = `_ph_${intent.id}`;
+        if (!nodes.some((node) => node.data.id === phId)) {
+          const nodeType = openIntentNodeType(intent);
+          const nodeSize = openIntentNodeSize(intent);
+          nodes.push({
+            data: {
+              id: phId,
+              label: openIntentNodeLabel(intent),
+              description: intent.description,
+              nodeType,
+              intentId: intent.id,
+              width: nodeSize.width,
+              height: nodeSize.height,
+            },
+          });
+        }
+
         edges.push({
-          data: { id: `${source}-${intent.id}`, source, target: intent.id, label: "触发" },
-          classes: "source-edge",
+          data: {
+            id: `${intent.id}_${source}`,
+            source,
+            target: phId,
+            intentId: intent.id,
+            label,
+            status: openIntentNodeType(intent),
+          },
         });
-      });
-      if (intent.to) {
+      }
+      );
+
+      if (!intent.to && isBootstrapIntent(intent)) {
         edges.push({
-          data: { id: `${intent.id}-${intent.to}`, source: intent.id, target: intent.to, label: "产出" },
-          classes: "result-edge",
+          data: {
+            id: `${intent.id}_goal`,
+            source: `_ph_${intent.id}`,
+            target: "goal",
+            intentId: intent.id,
+            label: "",
+            status: openIntentNodeType(intent),
+            edgeType: "bootstrap_scope",
+          },
         });
       }
     });
-    return [...nodes, ...intentNodes, ...edges];
+
+    return [...nodes, ...edges];
   }, [detail]);
 
   useEffect(() => {
@@ -2180,120 +2434,345 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      wheelSensitivity: 0.18,
-      minZoom: 0.35,
-      maxZoom: 2.2,
+      wheelSensitivity: 0.16,
+      minZoom: 0.18,
+      maxZoom: 3.5,
+      boxSelectionEnabled: false,
       style: [
         {
-          selector: "node",
+          selector: 'node[nodeType="origin"]',
           style: {
             label: "data(label)",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-            "font-size": 15,
-            "font-weight": 620,
+            shape: "round-rectangle",
+            "background-color": "#14b8a6",
             color: "#fff",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 11,
+            "font-weight": "bold",
             "text-wrap": "wrap",
-            "text-max-width": 190,
+            "text-max-width": 92,
+            "text-overflow-wrap": "anywhere",
             "text-valign": "center",
             "text-halign": "center",
-            width: 196,
-            height: 72,
-            shape: "round-rectangle",
-            "background-color": "#007aff",
-            "background-opacity": 0.96,
+            width: "data(width)",
+            height: "data(height)",
             "border-width": 0,
-            "shadow-blur": 16,
-            "shadow-color": "rgba(0, 122, 255, .22)",
-            "shadow-opacity": 1,
           },
         },
         {
-          selector: ".fact-node",
+          selector: 'node[nodeType="goal"]',
           style: {
-            "background-color": "#0a84ff",
+            label: "data(label)",
+            shape: "round-rectangle",
+            "background-color": "#f43f5e",
+            color: "#fff",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 11,
+            "font-weight": "bold",
+            "text-wrap": "wrap",
+            "text-max-width": 92,
+            "text-overflow-wrap": "anywhere",
+            "text-valign": "center",
+            "text-halign": "center",
+            width: "data(width)",
+            height: "data(height)",
+            "border-width": 0,
           },
         },
         {
-          selector: ".origin",
+          selector: 'node[nodeType="fact"]',
           style: {
-            width: 220,
-            height: 104,
-            "background-color": "#34c759",
-            "font-size": 26,
+            label: "data(label)",
+            shape: "round-rectangle",
+            "background-color": "#6366f1",
+            color: "#fff",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 10,
+            "font-weight": "bold",
+            "text-wrap": "wrap",
+            "text-max-width": 116,
+            "text-overflow-wrap": "anywhere",
+            "text-valign": "center",
+            "text-halign": "center",
+            width: "data(width)",
+            height: "data(height)",
+            "border-width": 0,
           },
         },
         {
-          selector: ".goal",
+          selector: 'node[nodeType="in_progress"]',
           style: {
-            width: 220,
-            height: 104,
-            "background-color": "#ff6b6b",
-            opacity: 0.88,
-            "font-size": 26,
+            label: "?",
+            shape: "ellipse",
+            "background-color": "#f59e0b",
+            "background-opacity": 0.8,
+            color: "#fff",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 11,
+            "font-weight": "bold",
+            width: 22,
+            height: 22,
+            "border-width": 2,
+            "border-color": "#d97706",
           },
         },
         {
-          selector: ".intent-node.open",
+          selector: 'node[nodeType="unclaimed"]',
           style: {
-            "background-color": "#ff9f0a",
+            label: "?",
+            shape: "ellipse",
+            "background-color": "#cbd5e1",
+            "background-opacity": 0.5,
+            color: "#94a3b8",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 11,
+            "font-weight": "bold",
+            width: 20,
+            height: 20,
+            "border-width": 1.5,
+            "border-color": "#94a3b8",
+            "border-style": "dashed",
           },
         },
         {
-          selector: ".intent-node.claimed",
+          selector: 'node[nodeType="bootstrap_pending"]',
           style: {
-            "background-color": "#5856d6",
+            "background-color": "#fff7ed",
+            "background-opacity": 0.96,
+            label: "data(label)",
+            "border-color": "#fdba74",
+            color: "#c2410c",
+            shape: "round-rectangle",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 10,
+            "font-weight": "bold",
+            width: "data(width)",
+            height: "data(height)",
+            "border-width": 1.5,
+            "border-style": "dashed",
+            "text-wrap": "wrap",
+            "text-max-width": 70,
+            "text-valign": "center",
+            "text-halign": "center",
           },
         },
         {
-          selector: ".intent-node.done",
+          selector: 'node[nodeType="bootstrap_running"]',
           style: {
-            "background-color": "#007aff",
+            "background-color": "#fb923c",
+            "background-opacity": 0.96,
+            label: "data(label)",
+            "border-color": "#ea580c",
+            color: "#fff7ed",
+            shape: "round-rectangle",
+            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-size": 10,
+            "font-weight": "bold",
+            width: "data(width)",
+            height: "data(height)",
+            "border-width": 2,
+            "text-wrap": "wrap",
+            "text-max-width": 70,
+            "text-valign": "center",
+            "text-halign": "center",
           },
         },
         {
-          selector: "edge",
+          selector: 'edge[status="concluded"]',
           style: {
             width: 2,
-            "curve-style": "bezier",
+            "line-color": "#6ee7b7",
+            "target-arrow-color": "#6ee7b7",
             "target-arrow-shape": "triangle",
-            "line-color": "#7ee0c5",
-            "target-arrow-color": "#7ee0c5",
+            "curve-style": "bezier",
             label: "data(label)",
-            "font-size": 12,
-            color: "#334155",
-            "text-background-color": "#fff",
-            "text-background-opacity": 0.9,
-            "text-background-padding": 4,
+            "font-size": 7,
+            color: "#94a3b8",
+            "text-rotation": "autorotate",
+            "text-margin-y": -9,
+            "text-max-width": 80,
+            "text-wrap": "ellipsis",
+            "text-background-color": "#f8fafc",
+            "text-background-opacity": 0.85,
+            "text-background-padding": 2,
+            "text-events": "yes",
+            "arrow-scale": 0.9,
           },
         },
         {
-          selector: ".source-edge",
+          selector: 'edge[status="in_progress"]',
           style: {
+            width: 2,
+            "line-color": "#fbbf24",
             "line-style": "dashed",
+            "line-dash-pattern": [8, 4],
+            "line-dash-offset": 0,
+            "target-arrow-color": "#fbbf24",
+            "target-arrow-shape": "triangle",
+            "curve-style": "bezier",
+            "arrow-scale": 0.9,
+            label: "data(label)",
+            "font-size": 7,
+            color: "#b45309",
+            "text-rotation": "autorotate",
+            "text-margin-y": -9,
+            "text-max-width": 80,
+            "text-wrap": "ellipsis",
+            "text-background-color": "#fffbeb",
+            "text-background-opacity": 0.85,
+            "text-background-padding": 2,
+            "text-events": "yes",
           },
         },
         {
-          selector: ":selected",
+          selector: 'edge[status="unclaimed"]',
           style: {
-            "border-width": 5,
-            "border-color": "#ffffff",
-            "shadow-blur": 30,
-            "shadow-color": "rgba(0, 122, 255, .36)",
+            width: 1.5,
+            "line-color": "#cbd5e1",
+            "line-style": "dashed",
+            "line-dash-pattern": [5, 5],
+            "target-arrow-color": "#cbd5e1",
+            "target-arrow-shape": "triangle",
+            "curve-style": "bezier",
+            label: "data(label)",
+            "font-size": 7,
+            color: "#94a3b8",
+            "text-rotation": "autorotate",
+            "text-margin-y": -9,
+            "text-max-width": 80,
+            "text-wrap": "ellipsis",
+            "text-background-color": "#f8fafc",
+            "text-background-opacity": 0.85,
+            "text-background-padding": 2,
+            "text-events": "yes",
+            "arrow-scale": 0.7,
           },
         },
+        {
+          selector: 'edge[status="bootstrap_pending"]',
+          style: {
+            width: 2,
+            "line-color": "#fdba74",
+            "line-style": "dashed",
+            "line-dash-pattern": [8, 4],
+            "line-dash-offset": 0,
+            "target-arrow-color": "#fdba74",
+            "target-arrow-shape": "triangle",
+            "curve-style": "bezier",
+            label: "data(label)",
+            "font-size": 7,
+            color: "#c2410c",
+            "text-rotation": "autorotate",
+            "text-margin-y": -9,
+            "text-max-width": 88,
+            "text-wrap": "ellipsis",
+            "text-background-color": "#fff7ed",
+            "text-background-opacity": 0.92,
+            "text-background-padding": 2,
+            "text-events": "yes",
+            "arrow-scale": 0.85,
+          },
+        },
+        {
+          selector: 'edge[status="bootstrap_running"]',
+          style: {
+            width: 2.5,
+            "line-color": "#fb923c",
+            "line-style": "dashed",
+            "line-dash-pattern": [10, 4],
+            "line-dash-offset": 0,
+            "target-arrow-color": "#fb923c",
+            "target-arrow-shape": "triangle",
+            "curve-style": "bezier",
+            label: "data(label)",
+            "font-size": 7,
+            color: "#c2410c",
+            "text-rotation": "autorotate",
+            "text-margin-y": -9,
+            "text-max-width": 88,
+            "text-wrap": "ellipsis",
+            "text-background-color": "#fff7ed",
+            "text-background-opacity": 0.92,
+            "text-background-padding": 2,
+            "text-events": "yes",
+            "arrow-scale": 0.95,
+          },
+        },
+        {
+          selector: 'edge[edgeType="bootstrap_scope"]',
+          style: {
+            label: "",
+            width: 1.8,
+            "curve-style": "bezier",
+            "line-style": "dotted",
+            "line-dash-pattern": [2, 5],
+            "target-arrow-shape": "triangle-backcurve",
+            "arrow-scale": 0.75,
+            "target-distance-from-node": 2,
+          },
+        },
+        { selector: ".highlight", style: { "z-index": 999 } },
+        { selector: "edge.highlight", style: { "z-index": 999 } },
+        {
+          selector: "node.focus",
+          style: {
+            "border-width": 3,
+            "border-color": "#312e81",
+            "border-opacity": 0.95,
+            "z-index": 1000,
+          },
+        },
+        {
+          selector: "edge.focus",
+          style: {
+            "z-index": 1000,
+            "overlay-color": "#93c5fd",
+            "overlay-opacity": 0.22,
+            "overlay-padding": 5,
+          },
+        },
+        {
+          selector: "node.selected-fact",
+          style: {
+            "border-width": 0,
+            "underlay-color": "#93c5fd",
+            "underlay-padding": 8,
+            "underlay-opacity": 0.28,
+            "z-index": 1001,
+          },
+        },
+        { selector: ".faded", style: { opacity: 0.5 } },
       ],
     });
     cyRef.current = cy;
     cy.on("tap", "node", (event) => {
       const node = event.target;
-      const id = node.id();
-      const type = detail.facts.some((fact) => fact.id === id) ? "fact" : "intent";
-      onSelect({ type, id });
+      const intentId = node.data("intentId");
+      if (intentId) {
+        onSelect({ type: "intent", id: intentId });
+        return;
+      }
+      onSelect({ type: "fact", id: node.id() });
+    });
+    cy.on("tap", "edge", (event) => {
+      const intentId = event.target.data("intentId");
+      if (intentId) onSelect({ type: "intent", id: intentId });
     });
     cy.on("tap", (event) => {
       if (event.target === cy) onSelect(null);
     });
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            cy.resize();
+            if (cy.elements().length > 0) {
+              cy.fit(cy.elements(), 92);
+            }
+          });
+    resizeObserver?.observe(containerRef.current);
     return () => {
+      resizeObserver?.disconnect();
       cy.destroy();
       cyRef.current = null;
     };
@@ -2302,34 +2781,166 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    const options =
-      layout === "dagre"
-        ? { name: "dagre", rankDir: "TB", nodeSep: 75, rankSep: 125, fit: true, padding: 44 }
-        : { name: layout, fit: true, padding: 54 };
+    const direction = layout.endsWith("_lr") ? "LR" : "TB";
+    const engine = layout.startsWith("elk") ? "elk" : layout.startsWith("klay") ? "klay" : "dagre";
+    let options;
+
+    if (engine === "elk") {
+      options = {
+        name: "elk",
+        fit: true,
+        padding: 50,
+        animate: true,
+        animationDuration: 350,
+        animationEasing: "ease-in-out-cubic",
+        elk: {
+          algorithm: "layered",
+          "elk.direction": direction === "TB" ? "DOWN" : "RIGHT",
+          "elk.aspectRatio": "1.5",
+          "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+          "elk.spacing.nodeNode": "50",
+          "elk.layered.spacing.nodeNodeBetweenLayers": "80",
+          "elk.spacing.edgeNode": "25",
+          "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+          "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+        },
+      };
+    } else if (engine === "klay") {
+      options = {
+        name: "klay",
+        fit: true,
+        padding: 50,
+        animate: true,
+        animationDuration: 400,
+        animationEasing: "ease-in-out-cubic",
+        klay: {
+          direction: direction === "TB" ? "DOWN" : "RIGHT",
+          edgeRouting: "POLYLINE",
+          crossingMinimization: "LAYER_SWEEP",
+          nodeLayering: "NETWORK_SIMPLEX",
+          nodePlacement: "BRANDES_KOEPF",
+          separateConnectedComponents: true,
+          spacing: direction === "LR" ? 52 : 40,
+          inLayerSpacingFactor: direction === "LR" ? 1.15 : 1.0,
+          thoroughness: 8,
+        },
+      };
+    } else {
+      options = {
+        name: "dagre",
+        rankDir: direction,
+        nodeSep: 60,
+        rankSep: 80,
+        padding: 50,
+        fit: true,
+        animate: true,
+        animationDuration: 400,
+        animationEasing: "ease-in-out-cubic",
+      };
+    }
     cy.layout(options).run();
     window.setTimeout(() => {
       if (!cyRef.current) return;
-      const currentZoom = cyRef.current.zoom();
-      if (currentZoom < 0.72) {
-        cyRef.current.zoom({ level: 0.72, renderedPosition: { x: cyRef.current.width() / 2, y: cyRef.current.height() / 2 } });
-        cyRef.current.center();
-      }
+      cyRef.current.fit(cyRef.current.elements(), 50);
     }, 80);
   }, [layout, elements]);
 
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    cy.nodes().unselect();
-    if (selected?.id) {
-      cy.getElementById(selected.id).select();
+    const isBootstrapIntent = (intent) =>
+      Boolean(
+        intent &&
+          intent.description === "bootstrap" &&
+          intent.creator === "dispatcher.bootstrap" &&
+          Array.isArray(intent.from) &&
+          intent.from.length === 1 &&
+          intent.from[0] === "origin" &&
+          intent.to === null,
+      );
+
+    const collectIntentElements = (intent, nodeIds, edgeIds) => {
+      if (intent.to) nodeIds.add(intent.to);
+      else nodeIds.add(`_ph_${intent.id}`);
+      for (const sourceId of intent.from || []) {
+        nodeIds.add(sourceId);
+        edgeIds.add(`${intent.id}_${sourceId}`);
+      }
+      if (isBootstrapIntent(intent)) {
+        nodeIds.add("goal");
+        edgeIds.add(`${intent.id}_goal`);
+      }
+    };
+
+    const collectFactLineage = (factId) => {
+      const upstreamFacts = new Set();
+      const upstreamIntents = new Set();
+
+      const walkFactUpstream = (id) => {
+        if (upstreamFacts.has(id)) return;
+        upstreamFacts.add(id);
+        detail.intents.forEach((intent) => {
+          if (intent.to === id) walkIntentUpstream(intent.id);
+        });
+      };
+
+      const walkIntentUpstream = (intentId) => {
+        if (upstreamIntents.has(intentId)) return;
+        upstreamIntents.add(intentId);
+        const intent = detail.intents.find((item) => item.id === intentId);
+        if (!intent) return;
+        (intent.from || []).forEach((sourceId) => walkFactUpstream(sourceId));
+      };
+
+      walkFactUpstream(factId);
+      return { upstreamFacts, upstreamIntents };
+    };
+
+    cy.elements().removeClass("highlight focus faded selected-fact");
+
+    if (!selected?.id) return;
+
+    if (selected.type === "intent") {
+      const intent = detail.intents.find((item) => item.id === selected.id);
+      if (!intent) return;
+      const nodeIds = new Set();
+      const edgeIds = new Set();
+      collectIntentElements(intent, nodeIds, edgeIds);
+      const highlightNodes = cy.nodes().filter((node) => nodeIds.has(node.id()));
+      const focusEdges = cy.edges().filter((edge) => edgeIds.has(edge.id()));
+      highlightNodes.addClass("highlight");
+      focusEdges.addClass("focus");
+      const visible = highlightNodes.add(focusEdges);
+      cy.elements().not(visible).addClass("faded");
+      return;
     }
-  }, [selected]);
+
+    if (selected.type === "fact") {
+      const { upstreamFacts, upstreamIntents } = collectFactLineage(selected.id);
+      const nodeIds = new Set(upstreamFacts);
+      const edgeIds = new Set();
+      upstreamIntents.forEach((intentId) => {
+        const intent = detail.intents.find((item) => item.id === intentId);
+        if (intent) collectIntentElements(intent, nodeIds, edgeIds);
+      });
+
+      const highlightNodes = cy.nodes().filter((node) => nodeIds.has(node.id()));
+      const highlightEdges = cy.edges().filter((edge) => edgeIds.has(edge.id()));
+      const focusNode = cy.getElementById(selected.id);
+
+      highlightNodes.addClass("highlight");
+      highlightEdges.addClass("highlight");
+      focusNode.addClass("focus selected-fact");
+
+      const visible = highlightNodes.add(highlightEdges).add(focusNode);
+      cy.elements().not(visible).addClass("faded");
+    }
+  }, [detail, selected]);
 
   return <div className="graph-canvas" ref={containerRef} />;
 }
 
-function Inspector({ detail, selected, setSelected, tab, setTab, timeline, onRefresh, runAction }) {
+function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timeline, onRefresh, runAction }) {
   const facts = detail.facts;
   const intents = detail.intents;
   const fact = selected?.type === "fact" ? facts.find((item) => item.id === selected.id) : null;
@@ -2377,15 +2988,18 @@ function Inspector({ detail, selected, setSelected, tab, setTab, timeline, onRef
         {tab === "details" && (
           <>
             {!selected && (
-              <div className="detail-card">
-                <span>项目</span>
-                <h3>{detail.project.title}</h3>
-                <p>{detail.project.id}</p>
-                <div className="detail-grid">
-                  <MiniStat label="事实" value={facts.length} />
-                  <MiniStat label="意图" value={intents.length} />
+              <>
+                <div className="detail-card">
+                  <span>项目</span>
+                  <h3>{detail.project.title}</h3>
+                  <p>{detail.project.id}</p>
+                  <div className="detail-grid">
+                    <MiniStat label="事实" value={facts.length} />
+                    <MiniStat label="意图" value={intents.length} />
+                  </div>
                 </div>
-              </div>
+                <ProjectCampaignPanel campaign={campaign} />
+              </>
             )}
             {fact && (
               <div className="detail-card">
@@ -2485,6 +3099,143 @@ function Inspector({ detail, selected, setSelected, tab, setTab, timeline, onRef
       </div>
     </aside>
   );
+}
+
+function ProjectCampaignPanel({ campaign }) {
+  if (!campaign) {
+    return (
+      <div className="detail-card project-campaign-card project-campaign-empty">
+        <div className="project-campaign-head">
+          <div>
+            <span>项目级研判</span>
+            <h3>摘要暂不可用</h3>
+          </div>
+        </div>
+        <p>当前项目还没有形成稳定的项目级主线摘要，或摘要接口暂时不可用。</p>
+      </div>
+    );
+  }
+
+  const goalMeta = campaignGoalMeta(campaign.goal_status);
+  const projectMeta = projectStatusBadgeMeta(campaign.project_status);
+
+  return (
+    <div className="detail-card project-campaign-card">
+      <div className="project-campaign-head">
+        <div>
+          <span>项目级研判</span>
+          <h3>当前主线</h3>
+        </div>
+        <div className="project-campaign-badges">
+          <Badge tone={goalMeta.tone}>{goalMeta.label}</Badge>
+          <Badge tone={projectMeta.tone}>{projectMeta.label}</Badge>
+        </div>
+      </div>
+      <p className="project-campaign-lead">{campaign.lead}</p>
+      <p className="project-campaign-summary">{campaign.summary}</p>
+      <div className="detail-grid project-campaign-stats">
+        <MiniStat label="高价值漏洞" value={campaign.counts.high_value_vulnerabilities} />
+        <MiniStat label="开放意图" value={campaign.counts.open_intents} />
+        <MiniStat label="阻塞项" value={campaign.blockers.length} />
+        <MiniStat label="下一步" value={campaign.next_steps.length} />
+      </div>
+      {!!campaign.top_findings?.length && (
+        <CampaignListBlock title="强信号">
+          {campaign.top_findings.map((finding) => (
+            <article key={`${finding.source_type}-${finding.source_id}`} className="project-campaign-item">
+              <div className="project-campaign-item-head">
+                <strong title={finding.title}>{finding.title}</strong>
+                <div className="project-campaign-inline">
+                  {finding.severity && <Badge tone={findingBadgeTone(finding.severity)}>{severityLabel(finding.severity)}</Badge>}
+                  <Badge tone={findingConfidenceTone(finding.confidence)}>{findingConfidenceLabel(finding.confidence)}</Badge>
+                </div>
+              </div>
+              <p title={finding.summary}>{finding.summary}</p>
+              <small>
+                {finding.source_id} · {findingSourceLabel(finding.source_type)}
+              </small>
+            </article>
+          ))}
+        </CampaignListBlock>
+      )}
+      {!!campaign.open_intents?.length && (
+        <CampaignListBlock title="待推进意图">
+          {campaign.open_intents.map((item, index) => (
+            <article key={`open-intent-${index}`} className="project-campaign-item">
+              <strong>{item}</strong>
+            </article>
+          ))}
+        </CampaignListBlock>
+      )}
+      {!!campaign.blockers?.length && (
+        <CampaignListBlock title="当前阻塞">
+          {campaign.blockers.map((item, index) => (
+            <article key={`blocker-${index}`} className="project-campaign-item blocker">
+              <strong>{item}</strong>
+            </article>
+          ))}
+        </CampaignListBlock>
+      )}
+      {!!campaign.next_steps?.length && (
+        <CampaignListBlock title="建议下一步">
+          {campaign.next_steps.map((item, index) => (
+            <article key={`next-step-${index}`} className="project-campaign-item next-step">
+              <strong>{item}</strong>
+            </article>
+          ))}
+        </CampaignListBlock>
+      )}
+    </div>
+  );
+}
+
+function CampaignListBlock({ title, children }) {
+  return (
+    <section className="project-campaign-block">
+      <header>
+        <h4>{title}</h4>
+      </header>
+      <div className="project-campaign-list">{children}</div>
+    </section>
+  );
+}
+
+function campaignGoalMeta(status) {
+  if (status === "achieved") return { label: "目标已达成", tone: "success" };
+  if (status === "in_progress") return { label: "主线推进中", tone: "warning" };
+  return { label: "当前受阻", tone: "danger" };
+}
+
+function projectStatusBadgeMeta(status) {
+  if (status === "completed") return { label: "项目已完成", tone: "info" };
+  if (status === "stopped") return { label: "项目已停止", tone: "warning" };
+  return { label: "项目运行中", tone: "success" };
+}
+
+function findingBadgeTone(severity) {
+  return SEVERITY_META[severity]?.tone || "muted";
+}
+
+function severityLabel(severity) {
+  return SEVERITY_META[severity]?.label || severity || "-";
+}
+
+function findingConfidenceTone(confidence) {
+  if (confidence === "confirmed") return "success";
+  if (confidence === "supported") return "info";
+  return "warning";
+}
+
+function findingConfidenceLabel(confidence) {
+  if (confidence === "confirmed") return "已确认";
+  if (confidence === "supported") return "有支撑";
+  return "待核实";
+}
+
+function findingSourceLabel(sourceType) {
+  if (sourceType === "vulnerability") return "漏洞";
+  if (sourceType === "fact") return "事实";
+  return "提示";
 }
 
 function IntentModal({ fromIds, facts, onClose, onSubmit }) {
@@ -3564,6 +4315,35 @@ function VulnerabilityItem({ vuln, selected, active, onSelect, onOpen, onExport,
 function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
   const meta = SEVERITY_META[vuln.severity] || SEVERITY_META.low;
   const ignored = vuln.status === "ignored";
+  const [reportDraft, setReportDraft] = useState(null);
+  const [reportLoading, setReportLoading] = useState(true);
+  const [reportRefreshing, setReportRefreshing] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const [reportHint, setReportHint] = useState("");
+
+  const regenerateReportDraft = useCallback(async () => {
+    setReportRefreshing(true);
+    setReportHint("正在使用 chat5.4 重生成交付版草稿…");
+    try {
+      const payload = await apiRequest(
+        `/api/vulnerabilities/${encodeURIComponent(vuln.id)}/report?use_model=1`,
+      );
+      if (payload?.composer_source === "model") {
+        setReportDraft(payload);
+        setReportError("");
+        setReportHint(`已切换到 ${payload.composer_model || "chat5.4"} 模型版`);
+      } else {
+        setReportHint("chat5.4 暂未返回，当前保留模板版草稿。");
+      }
+    } catch (error) {
+      if (!reportDraft) {
+        setReportError(error.message || "报告草稿生成失败");
+      }
+      setReportHint("chat5.4 暂时不可用，当前保留模板版草稿。");
+    } finally {
+      setReportRefreshing(false);
+    }
+  }, [reportDraft, vuln.id]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -3572,6 +4352,57 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReportLoading(true);
+    setReportRefreshing(false);
+    setReportError("");
+    setReportHint("");
+
+    const load = async () => {
+      try {
+        const payload = await apiRequest(`/api/vulnerabilities/${encodeURIComponent(vuln.id)}/report`);
+        if (cancelled) return;
+        setReportDraft(payload);
+        setReportHint("模板草稿已就绪，正在请求 chat5.4 增强版…");
+      } catch (error) {
+        if (cancelled) return;
+        setReportDraft(null);
+        setReportError(error.message || "报告草稿生成失败");
+        setReportLoading(false);
+        return;
+      }
+
+      if (cancelled) return;
+      setReportLoading(false);
+      setReportRefreshing(true);
+      try {
+        const payload = await apiRequest(
+          `/api/vulnerabilities/${encodeURIComponent(vuln.id)}/report?use_model=1`,
+        );
+        if (cancelled) return;
+        if (payload?.composer_source === "model") {
+          setReportDraft(payload);
+          setReportHint(`已切换到 ${payload.composer_model || "chat5.4"} 模型版`);
+        } else {
+          setReportHint("chat5.4 暂未返回，当前展示模板版草稿。");
+        }
+      } catch {
+        if (cancelled) return;
+        setReportHint("chat5.4 暂时不可用，当前展示模板版草稿。");
+      } finally {
+        if (!cancelled) {
+          setReportRefreshing(false);
+        }
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [vuln.id]);
 
   return (
     <div className="drawer-backdrop" role="presentation" onClick={onClose}>
@@ -3599,6 +4430,14 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
           </button>
         </header>
         <div className="drawer-body">
+          <VulnerabilityNarrativeCard
+            report={reportDraft}
+            loading={reportLoading}
+            refreshing={reportRefreshing}
+            error={reportError}
+            hint={reportHint}
+            onRefresh={regenerateReportDraft}
+          />
           <div className="drawer-info-grid">
             <InfoBox label="所属项目" value={`${vuln.project_name} (${vuln.project_id})`} />
             <InfoBox label="确认事实" value={vuln.fact_id} />
@@ -3667,6 +4506,15 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
             关闭
           </button>
           <div className="drawer-footer-actions">
+            <button
+              className="ghost-button compact"
+              type="button"
+              onClick={regenerateReportDraft}
+              disabled={reportLoading || reportRefreshing}
+            >
+              {reportRefreshing ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
+              模型重生成
+            </button>
             <button className="primary-outline compact" type="button" onClick={onExport}>
               <Download size={16} />
               导出
@@ -3683,6 +4531,127 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
         </footer>
       </aside>
     </div>
+  );
+}
+
+function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, onRefresh }) {
+  return (
+    <section className="drawer-section report-draft-section">
+      <div className="report-draft-head">
+        <div>
+          <h4>交付版报告草稿</h4>
+          <p>
+            {report
+              ? report.composer_source === "model"
+                ? `模型整理 · ${report.composer_model || "chat5.4"}`
+                : refreshing
+                  ? "模板已就绪 · chat5.4 增强中"
+                  : "模板草稿"
+              : "基于现有证据生成，不改漏洞状态"}
+          </p>
+          {!!hint && <small className="report-draft-hint">{hint}</small>}
+        </div>
+        <button
+          className="ghost-button compact"
+          type="button"
+          onClick={onRefresh}
+          disabled={loading || refreshing}
+        >
+          {refreshing ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+          模型重生成
+        </button>
+      </div>
+      {loading ? (
+        <div className="report-draft-card report-draft-loading">
+          <Loader2 className="spin" size={16} />
+          <span>正在整理报告草稿…</span>
+        </div>
+      ) : error ? (
+        <div className="report-draft-card report-draft-error">
+          <strong>报告草稿暂不可用</strong>
+          <p>{error}</p>
+        </div>
+      ) : !report ? (
+        <div className="report-draft-card report-draft-error">
+          <strong>报告草稿暂不可用</strong>
+          <p>当前漏洞还没有形成可展示的交付版草稿。</p>
+        </div>
+      ) : (
+        <div className="report-draft-card">
+          <div className="report-draft-summary">
+            <span className="report-draft-type">{report.vulnerability_type}</span>
+            <p>{report.executive_summary}</p>
+          </div>
+          {!!report.attack_surface?.length && (
+            <div className="report-draft-block">
+              <h5>攻击面</h5>
+              <div className="report-draft-tags">
+                {report.attack_surface.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="report-draft-block">
+            <h5>漏洞证明</h5>
+            <p>{report.vulnerability_proof}</p>
+          </div>
+          {!!report.proof_points?.length && (
+            <div className="report-draft-block">
+              <h5>证明要点</h5>
+              <div className="report-draft-points">
+                {report.proof_points.map((point) => (
+                  <article key={`${point.label}-${point.content}`}>
+                    <strong>{point.label}</strong>
+                    <p>{point.content}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="report-draft-two-col">
+            <div className="report-draft-block">
+              <h5>影响结论</h5>
+              <p>{report.impact}</p>
+            </div>
+            <div className="report-draft-block">
+              <h5>成因分析</h5>
+              <p>{report.root_cause}</p>
+            </div>
+          </div>
+          {!!report.evidence_highlights?.length && (
+            <div className="report-draft-block">
+              <h5>关键证据</h5>
+              <ul className="report-draft-list">
+                {report.evidence_highlights.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {!!report.remediation?.length && (
+            <div className="report-draft-block">
+              <h5>修复建议</h5>
+              <ul className="report-draft-list">
+                {report.remediation.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {!!report.operator_notes?.length && (
+            <div className="report-draft-block muted">
+              <h5>说明</h5>
+              <ul className="report-draft-list">
+                {report.operator_notes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
