@@ -2940,6 +2940,27 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   return <div className="graph-canvas" ref={containerRef} />;
 }
 
+function InspectorListItem({ title, description, meta, onClick }) {
+  const Comp = onClick ? "button" : "article";
+  const props = onClick
+    ? {
+        type: "button",
+        onClick,
+      }
+    : {};
+  return (
+    <Comp className={cn("timeline-item", onClick && "clickable")} {...props}>
+      <div className="timeline-item-head">
+        <strong className="timeline-item-title" title={title}>
+          {title}
+        </strong>
+      </div>
+      <p title={description}>{description}</p>
+      <small title={meta}>{meta}</small>
+    </Comp>
+  );
+}
+
 function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timeline, onRefresh, runAction }) {
   const facts = detail.facts;
   const intents = detail.intents;
@@ -2979,8 +3000,8 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
       <div className="inspector-tabs">
         {tabs.map(([key, label, count]) => (
           <button key={key} className={cn(tab === key && "active")} type="button" onClick={() => setTab(key)}>
-            {label}
-            {count !== null && <span>{count}</span>}
+            <span className="inspector-tab-label">{label}</span>
+            {count !== null && <span className="inspector-tab-badge">{count}</span>}
           </button>
         ))}
       </div>
@@ -3044,13 +3065,12 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
               <EmptyState title="暂无提示" />
             ) : (
               detail.hints.map((hint) => (
-                <article className="timeline-item" key={hint.id}>
-                  <span>{hint.id}</span>
-                  <p>{hint.content}</p>
-                  <small>
-                    {hint.creator} · {formatTime(hint.created_at)}
-                  </small>
-                </article>
+                <InspectorListItem
+                  key={hint.id}
+                  title={hint.id}
+                  description={hint.content}
+                  meta={`${hint.creator} · ${formatTime(hint.created_at)}`}
+                />
               ))
             )}
           </div>
@@ -3058,19 +3078,16 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
         {tab === "logs" && (
           <div className="timeline-list">
             {intents.map((item) => (
-              <button
-                className="timeline-item clickable"
+              <InspectorListItem
                 key={item.id}
-                type="button"
+                title={item.id}
+                description={item.description}
+                meta={item.worker || item.creator}
                 onClick={() => {
                   setSelected({ type: "intent", id: item.id });
                   setTab("details");
                 }}
-              >
-                <span>{item.id}</span>
-                <p>{item.description}</p>
-                <small>{item.worker || item.creator}</small>
-              </button>
+              />
             ))}
           </div>
         )}
@@ -3080,18 +3097,13 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
               <EmptyState title="暂无时间线" />
             ) : (
               timeline.map((event) => (
-                <button
-                  className="timeline-item clickable"
+                <InspectorListItem
                   key={event.id}
-                  type="button"
+                  title={event.event_type}
+                  description={event.description}
+                  meta={`${formatTime(event.timestamp)}${event.actor ? ` · ${event.actor}` : ""}`}
                   onClick={() => event.node_id && setSelected({ type: event.node_id.startsWith("i") ? "intent" : "fact", id: event.node_id })}
-                >
-                  <span>{event.event_type}</span>
-                  <p>{event.description}</p>
-                  <small>
-                    {formatTime(event.timestamp)} {event.actor ? `· ${event.actor}` : ""}
-                  </small>
-                </button>
+                />
               ))
             )}
           </div>
@@ -5891,52 +5903,311 @@ function PasswordModal({ onClose, runAction }) {
 
 function SettingsModal({ onClose, runAction }) {
   const [settings, setSettings] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [healthLoading, setHealthLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+
+  const settingsFallback = useMemo(
+    () => ({
+      intent_timeout: 15,
+      reason_timeout: 15,
+      worker_unhealthy_retry_after_seconds: 5,
+      worker_rejected_retry_after_seconds: 5,
+      max_failed_login_attempts: 5,
+      rate_limit_window_minutes: 15,
+      session_duration_hours: 24,
+      log_retention_days: 30,
+      export_retention_days: 30,
+      notification_retention_days: 14,
+      project_idle_alert_hours: 12,
+    }),
+    [],
+  );
 
   useEffect(() => {
-    apiRequest("/settings").then(setSettings).catch(() => setSettings({ intent_timeout: 60, reason_timeout: 60 }));
+    apiRequest("/settings").then(setSettings).catch(() => setSettings(settingsFallback));
+  }, [settingsFallback]);
+
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      setHealth(await apiRequest("/settings/health"));
+    } catch {
+      setHealth(null);
+    } finally {
+      setHealthLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadHealth();
+  }, [loadHealth]);
 
   const submit = async (event) => {
     event.preventDefault();
     setSaving(true);
     try {
       await runAction("设置已保存", () => apiRequest("/settings", { method: "PUT", body: settings }));
-      onClose();
+      await loadHealth();
     } finally {
       setSaving(false);
     }
   };
 
+  const runCleanup = async () => {
+    setCleaning(true);
+    try {
+      await runAction("系统清理已完成", () => apiRequest("/settings/cleanup", { method: "POST" }));
+      await loadHealth();
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const setNumber = (key, value) => {
+    setSettings((current) => ({ ...current, [key]: Number(value) }));
+  };
+
+  const healthTone = (status) => (status === "error" ? "danger" : status === "warning" ? "high" : "success");
+  const healthLabel = (status) => (status === "error" ? "异常" : status === "warning" ? "告警" : "正常");
+
   return (
-    <Modal title="调度设置" subtitle="仅调整超时参数，不改变项目和 Worker 数据。" onClose={onClose}>
+    <Modal
+      title="系统设置"
+      subtitle="统一管理调度、安全策略、历史保留周期和系统健康检查。"
+      onClose={onClose}
+      wide
+    >
       {!settings ? (
         <EmptyState icon={Loader2} title="正在读取设置" />
       ) : (
-        <form className="stack-form modal-body" onSubmit={submit}>
-          <label>
-            <span>意图超时（秒）</span>
-            <input
-              type="number"
-              min="5"
-              value={settings.intent_timeout}
-              onChange={(event) => setSettings({ ...settings, intent_timeout: Number(event.target.value) })}
-            />
-            <small className="field-hint">意图在被回收前允许等待的最长时间。</small>
-          </label>
-          <label>
-            <span>Reason 超时（秒）</span>
-            <input
-              type="number"
-              min="5"
-              value={settings.reason_timeout}
-              onChange={(event) => setSettings({ ...settings, reason_timeout: Number(event.target.value) })}
-            />
-            <small className="field-hint">Reason 阶段在判定超时前的最长执行时间。</small>
-          </label>
+        <form className="stack-form modal-body settings-shell" onSubmit={submit}>
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <div>
+                <h3>运行控制</h3>
+                <p>只影响调度节奏与冷却策略，不改项目和 Worker 配置结构。</p>
+              </div>
+              <Badge tone="info">调度</Badge>
+            </div>
+            <div className="two-col">
+              <label>
+                <span>意图超时（秒）</span>
+                <input type="number" min="5" value={settings.intent_timeout} onChange={(event) => setNumber("intent_timeout", event.target.value)} />
+                <small className="field-hint">意图在被回收前允许等待的最长时间。</small>
+              </label>
+              <label>
+                <span>Reason 超时（秒）</span>
+                <input type="number" min="5" value={settings.reason_timeout} onChange={(event) => setNumber("reason_timeout", event.target.value)} />
+                <small className="field-hint">Reason 阶段在判定超时前的最长执行时间。</small>
+              </label>
+            </div>
+            <div className="two-col">
+              <label>
+                <span>Worker 不健康冷却（秒）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.worker_unhealthy_retry_after_seconds}
+                  onChange={(event) => setNumber("worker_unhealthy_retry_after_seconds", event.target.value)}
+                />
+                <small className="field-hint">Worker 健康检查失败后，重新参与调度前的冷却时间。</small>
+              </label>
+              <label>
+                <span>拒绝任务重试间隔（秒）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.worker_rejected_retry_after_seconds}
+                  onChange={(event) => setNumber("worker_rejected_retry_after_seconds", event.target.value)}
+                />
+                <small className="field-hint">同一 Worker 暂时拒绝任务后，再次尝试分配的等待时间。</small>
+              </label>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <div>
+                <h3>认证与会话</h3>
+                <p>控制登录失败锁定、会话寿命和浏览器认证窗口。</p>
+              </div>
+              <Badge tone="success">安全</Badge>
+            </div>
+            <div className="three-col">
+              <label>
+                <span>失败锁定阈值</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.max_failed_login_attempts}
+                  onChange={(event) => setNumber("max_failed_login_attempts", event.target.value)}
+                />
+                <small className="field-hint">同一账号在窗口期内允许的最大失败次数。</small>
+              </label>
+              <label>
+                <span>限流窗口（分钟）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.rate_limit_window_minutes}
+                  onChange={(event) => setNumber("rate_limit_window_minutes", event.target.value)}
+                />
+                <small className="field-hint">超过失败阈值后，窗口期内继续登录会被直接拦截。</small>
+              </label>
+              <label>
+                <span>Session 时长（小时）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.session_duration_hours}
+                  onChange={(event) => setNumber("session_duration_hours", event.target.value)}
+                />
+                <small className="field-hint">有效会话的滑动过期时间。</small>
+              </label>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <div>
+                <h3>保留与清理</h3>
+                <p>只清理历史记录、导出记录和已读通知，不触碰项目事实、意图和漏洞数据。</p>
+              </div>
+              <Badge tone="medium">维护</Badge>
+            </div>
+            <div className="three-col">
+              <label>
+                <span>日志保留（天）</span>
+                <input type="number" min="1" value={settings.log_retention_days} onChange={(event) => setNumber("log_retention_days", event.target.value)} />
+                <small className="field-hint">用于审计日志、Worker 历史和登录尝试记录。</small>
+              </label>
+              <label>
+                <span>导出记录保留（天）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.export_retention_days}
+                  onChange={(event) => setNumber("export_retention_days", event.target.value)}
+                />
+                <small className="field-hint">只清理导出历史记录，不影响实时导出功能。</small>
+              </label>
+              <label>
+                <span>通知保留（天）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.notification_retention_days}
+                  onChange={(event) => setNumber("notification_retention_days", event.target.value)}
+                />
+                <small className="field-hint">仅清理已读通知，未读通知会保留。</small>
+              </label>
+            </div>
+            <div className="two-col">
+              <label>
+                <span>项目无进展告警（小时）</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={settings.project_idle_alert_hours}
+                  onChange={(event) => setNumber("project_idle_alert_hours", event.target.value)}
+                />
+                <small className="field-hint">活动项目最近无新增事实、提示、意图或 Reason 心跳时触发告警。</small>
+              </label>
+              <div className="settings-action-card">
+                <div>
+                  <strong>立即清理历史数据</strong>
+                  <p>按当前保留策略删除过期日志、已读通知、导出记录和失效会话。</p>
+                </div>
+                <button className="ghost-button compact" type="button" onClick={runCleanup} disabled={cleaning}>
+                  {cleaning ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
+                  立即清理
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <div>
+                <h3>系统健康</h3>
+                <p>查看当前 API、数据库、调度器和 Worker 的整体状态。</p>
+              </div>
+              <button className="ghost-button compact" type="button" onClick={loadHealth} disabled={healthLoading}>
+                {healthLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                刷新状态
+              </button>
+            </div>
+
+            {health ? (
+              <>
+                <div className="settings-health-grid">
+                  <article className={cn("settings-health-card", health.summary.status)}>
+                    <span>系统状态</span>
+                    <strong>{healthLabel(health.summary.status)}</strong>
+                    <small>更新时间 {formatTime(health.generated_at)}</small>
+                  </article>
+                  <article className="settings-health-card">
+                    <span>活动项目</span>
+                    <strong>{health.summary.active_projects}</strong>
+                    <small>项目总数 {health.stats.projects}</small>
+                  </article>
+                  <article className="settings-health-card">
+                    <span>在线 Worker</span>
+                    <strong>{health.summary.online_workers}</strong>
+                    <small>离线 {health.summary.offline_workers}</small>
+                  </article>
+                  <article className="settings-health-card">
+                    <span>未读通知</span>
+                    <strong>{health.stats.notifications_unread}</strong>
+                    <small>审计日志 {health.stats.audit_entries}</small>
+                  </article>
+                </div>
+
+                <div className="settings-check-list">
+                  {health.checks.map((check) => (
+                    <article key={check.key} className={cn("settings-check-item", check.status)}>
+                      <div className="settings-check-head">
+                        <strong>{check.label}</strong>
+                        <Badge tone={healthTone(check.status)}>{healthLabel(check.status)}</Badge>
+                      </div>
+                      <p>{check.summary}</p>
+                      {check.detail && <small>{check.detail}</small>}
+                    </article>
+                  ))}
+                </div>
+
+                <div className="settings-alert-block">
+                  <div className="settings-alert-head">
+                    <strong>告警与提醒</strong>
+                    <span>{health.alerts.length} 条</span>
+                  </div>
+                  {health.alerts.length === 0 ? (
+                    <div className="soft-box">当前没有需要处理的系统级告警。</div>
+                  ) : (
+                    <div className="settings-alert-list">
+                      {health.alerts.map((alert, index) => (
+                        <article key={`${alert.title}-${index}`} className={cn("settings-alert-item", alert.level)}>
+                          <div className="settings-alert-title">
+                            <AlertTriangle size={16} />
+                            <strong>{alert.title}</strong>
+                          </div>
+                          {alert.detail && <p>{alert.detail}</p>}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="soft-box">系统健康状态暂不可用，可稍后刷新重试。</div>
+            )}
+          </section>
+
           <div className="modal-footer">
             <button className="ghost-button" type="button" onClick={onClose}>
-              取消
+              关闭
             </button>
             <button className="primary-button compact" type="submit" disabled={saving}>
               {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}

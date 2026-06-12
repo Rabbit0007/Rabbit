@@ -9,6 +9,32 @@ DEFAULT_DB = Path.home() / ".local" / "share" / "cairn" / "cairn.db"
 
 _db_path: Path | None = None
 
+SETTINGS_DEFAULTS: dict[str, int] = {
+    "intent_timeout": 15,
+    "reason_timeout": 15,
+    "worker_unhealthy_retry_after_seconds": 5,
+    "worker_rejected_retry_after_seconds": 5,
+    "max_failed_login_attempts": 5,
+    "rate_limit_window_minutes": 15,
+    "session_duration_hours": 24,
+    "log_retention_days": 30,
+    "export_retention_days": 30,
+    "notification_retention_days": 14,
+    "project_idle_alert_hours": 12,
+}
+
+SETTINGS_ADDITIONAL_COLUMNS: dict[str, str] = {
+    "worker_unhealthy_retry_after_seconds": "INTEGER NOT NULL DEFAULT 5",
+    "worker_rejected_retry_after_seconds": "INTEGER NOT NULL DEFAULT 5",
+    "max_failed_login_attempts": "INTEGER NOT NULL DEFAULT 5",
+    "rate_limit_window_minutes": "INTEGER NOT NULL DEFAULT 15",
+    "session_duration_hours": "INTEGER NOT NULL DEFAULT 24",
+    "log_retention_days": "INTEGER NOT NULL DEFAULT 30",
+    "export_retention_days": "INTEGER NOT NULL DEFAULT 30",
+    "notification_retention_days": "INTEGER NOT NULL DEFAULT 14",
+    "project_idle_alert_hours": "INTEGER NOT NULL DEFAULT 12",
+}
+
 SCHEMA = """\
 CREATE TABLE IF NOT EXISTS settings (
     intent_timeout INTEGER NOT NULL DEFAULT 15,
@@ -89,6 +115,17 @@ def configure(path: Path) -> None:
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _ensure_settings_columns(conn)
+
+
+def _ensure_settings_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(settings)").fetchall()
+    }
+    for name, ddl in SETTINGS_ADDITIONAL_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE settings ADD COLUMN {name} {ddl}")
 
 
 @contextmanager

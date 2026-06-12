@@ -18,11 +18,12 @@ from cairn.dispatcher.scheduler.worker_select import choose_worker
 from cairn.dispatcher.tasks.bootstrap import run_bootstrap_task
 from cairn.dispatcher.tasks.explore import run_explore_task
 from cairn.dispatcher.tasks.reason import run_reason_task
-from cairn.server.models import Intent, ProjectDetail, ProjectSummary
+from cairn.server.models import Intent, ProjectDetail, ProjectSummary, Settings
 
 LOG = logging.getLogger(__name__)
 UNHEALTHY_RETRY_AFTER_SECONDS = 5
 REJECTED_RETRY_AFTER_SECONDS = 5
+SETTINGS_REFRESH_INTERVAL_SECONDS = 15
 BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap"
 BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap"
 
@@ -54,7 +55,8 @@ class DispatcherLoop:
         self._cleanup_pending: set[str] = set()
         self._inactive_cleanup_done: dict[str, str] = {}
         self.project_cursor = 0
-        self._settings_checked = False
+        self._server_settings: Settings | None = None
+        self._server_settings_loaded_at = 0.0
         self._startup_healthchecks_checked = False
 
     def close(self) -> None:
@@ -74,9 +76,7 @@ class DispatcherLoop:
             self.run_startup_healthchecks()
             while True:
                 try:
-                    if not self._settings_checked:
-                        self._validate_server_settings()
-                        self._settings_checked = True
+                    self._refresh_server_settings()
                     self._reap_futures()
                     self._reap_cleanup_futures()
                     summaries = self.client.list_projects()
@@ -656,7 +656,10 @@ class DispatcherLoop:
                     )
                 self._clear_project_log_state(task.project_id)
                 if outcome == "unhealthy":
-                    retry_after_seconds = UNHEALTHY_RETRY_AFTER_SECONDS
+                    retry_after_seconds = self._server_setting(
+                        "worker_unhealthy_retry_after_seconds",
+                        UNHEALTHY_RETRY_AFTER_SECONDS,
+                    )
                     self.worker_unhealthy_until[task.worker_name] = time.time() + retry_after_seconds
                     LOG.info(
                         "worker marked unhealthy worker=%s retry_after=%.0fs",
@@ -667,7 +670,10 @@ class DispatcherLoop:
                     self.worker_unhealthy_until.pop(task.worker_name, None)
                 rejection_key = (task.project_id, task.task_type, task.worker_name)
                 if outcome == "rejected":
-                    retry_after_seconds = REJECTED_RETRY_AFTER_SECONDS
+                    retry_after_seconds = self._server_setting(
+                        "worker_rejected_retry_after_seconds",
+                        REJECTED_RETRY_AFTER_SECONDS,
+                    )
                     self.worker_rejected_until[rejection_key] = time.time() + retry_after_seconds
                     LOG.info(
                         "worker marked rejected project=%s task=%s worker=%s retry_after=%.0fs",
@@ -819,8 +825,7 @@ class DispatcherLoop:
             if scope.startswith(prefix):
                 self._log_state.pop(scope, None)
 
-    def _validate_server_settings(self) -> None:
-        settings = self.client.get_settings()
+    def _validate_server_settings(self, settings: Settings) -> None:
         interval = self.config.runtime.interval
         for name, value in (("intent_timeout", settings.intent_timeout), ("reason_timeout", settings.reason_timeout)):
             if value <= interval:
@@ -849,3 +854,24 @@ class DispatcherLoop:
         if any(result.ok for result in results):
             return
         raise RuntimeError(format_failure_summary(results))
+
+    def _refresh_server_settings(self, *, force: bool = False) -> Settings:
+        now = time.time()
+        if (
+            not force
+            and self._server_settings is not None
+            and (now - self._server_settings_loaded_at) < SETTINGS_REFRESH_INTERVAL_SECONDS
+        ):
+            return self._server_settings
+        settings = self.client.get_settings()
+        self._validate_server_settings(settings)
+        self._server_settings = settings
+        self._server_settings_loaded_at = now
+        return settings
+
+    def _server_setting(self, name: str, default: int) -> int:
+        settings = self._server_settings
+        if settings is None:
+            return default
+        value = getattr(settings, name, default)
+        return int(value)

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from cairn.server.models import Intent, ProjectMeta, ProjectReason
+from cairn.server.settings_service import load_settings
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -174,13 +175,11 @@ def build_intents(conn: sqlite3.Connection, project_id: str) -> list[Intent]:
 
 
 def get_intent_timeout(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT intent_timeout FROM settings WHERE rowid = 1").fetchone()
-    return row["intent_timeout"]
+    return load_settings(conn).intent_timeout
 
 
 def get_reason_timeout(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT reason_timeout FROM settings WHERE rowid = 1").fetchone()
-    return row["reason_timeout"]
+    return load_settings(conn).reason_timeout
 
 
 def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:

@@ -48,17 +48,18 @@ from __future__ import annotations
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Request, Response
 from fastapi.exceptions import HTTPException
 
 from cairn.server.db import get_conn
 from cairn.server.routers.auth import (
+    DEFAULT_SESSION_DURATION,
     SESSION_COOKIE_NAME,
-    SESSION_DURATION,
     cookie_secure_for_request,
 )
+from cairn.server.settings_service import load_settings
 
 # Path the browser is redirected to when an unauthenticated navigation request is
 # made. The frontend serves its login view from the root path.
@@ -238,8 +239,13 @@ def require_auth(request: Request, response: Response) -> sqlite3.Row:
     now = datetime.now(timezone.utc)
 
     user_row: sqlite3.Row | None = None
+    session_duration = DEFAULT_SESSION_DURATION
     if token:
         with get_conn() as conn:
+            try:
+                session_duration = timedelta(hours=load_settings(conn).session_duration_hours)
+            except Exception:
+                session_duration = DEFAULT_SESSION_DURATION
             session = conn.execute(
                 "SELECT user_id, expires_at FROM sessions WHERE token = ?",
                 (token,),
@@ -262,7 +268,7 @@ def require_auth(request: Request, response: Response) -> sqlite3.Row:
                     else:
                         # Sliding-window extension (requirement 3.5): push the
                         # expiry out by the configured period.
-                        new_expires = now + SESSION_DURATION
+                        new_expires = now + session_duration
                         conn.execute(
                             "UPDATE sessions SET expires_at = ? WHERE token = ?",
                             (_format_timestamp(new_expires), token),
@@ -277,7 +283,7 @@ def require_auth(request: Request, response: Response) -> sqlite3.Row:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
-        max_age=int(SESSION_DURATION.total_seconds()),
+        max_age=int(session_duration.total_seconds()),
         httponly=True,
         secure=cookie_secure_for_request(request),
         samesite="strict",

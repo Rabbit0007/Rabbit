@@ -8,6 +8,15 @@ from pydantic import BaseModel, Field, field_validator
 class Settings(BaseModel):
     intent_timeout: int = Field(ge=5)
     reason_timeout: int = Field(ge=5)
+    worker_unhealthy_retry_after_seconds: int = Field(ge=1, le=3600)
+    worker_rejected_retry_after_seconds: int = Field(ge=1, le=3600)
+    max_failed_login_attempts: int = Field(ge=1, le=50)
+    rate_limit_window_minutes: int = Field(ge=1, le=1440)
+    session_duration_hours: int = Field(ge=1, le=168)
+    log_retention_days: int = Field(ge=1, le=3650)
+    export_retention_days: int = Field(ge=1, le=3650)
+    notification_retention_days: int = Field(ge=1, le=3650)
+    project_idle_alert_hours: int = Field(ge=1, le=720)
 
 
 class Fact(BaseModel):

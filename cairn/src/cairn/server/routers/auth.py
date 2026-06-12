@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 from cairn.server.auth_models import LoginRequest, RegisterRequest, UserResponse
 from cairn.server.db import get_conn
+from cairn.server.settings_service import load_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -29,13 +30,14 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 BCRYPT_COST = 12
 
 # Default session lifetime (requirement 1.1 / 3.1: defaults to 24 hours).
-SESSION_DURATION = timedelta(hours=24)
+DEFAULT_SESSION_DURATION = timedelta(hours=24)
+SESSION_DURATION = DEFAULT_SESSION_DURATION
 
 # Login rate limiting (requirements 2.3, 2.4): at most 5 failed attempts per
 # username within a sliding 15-minute window before the account is temporarily
 # locked.
-MAX_FAILED_LOGIN_ATTEMPTS = 5
-RATE_LIMIT_WINDOW = timedelta(minutes=15)
+DEFAULT_MAX_FAILED_LOGIN_ATTEMPTS = 5
+DEFAULT_RATE_LIMIT_WINDOW = timedelta(minutes=15)
 CAPTCHA_DURATION = timedelta(minutes=5)
 
 # Cookie name carrying the server-side session token. The auth middleware
@@ -91,10 +93,10 @@ def generate_session_token() -> str:
     return secrets.token_hex(32)
 
 
-def _create_session(conn, user_id: str, now: datetime) -> str:
+def _create_session(conn, user_id: str, now: datetime, session_duration: timedelta) -> str:
     """Create a session row for ``user_id`` and return the session token."""
     token = generate_session_token()
-    expires_at = now + SESSION_DURATION
+    expires_at = now + session_duration
     conn.execute(
         "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (token, user_id, _format_timestamp(now), _format_timestamp(expires_at)),
@@ -108,16 +110,31 @@ def cookie_secure_for_request(request: Request) -> bool:
     return not (request.url.scheme == "http" and host in LOCAL_HTTP_COOKIE_HOSTS)
 
 
-def _set_session_cookie(response: Response, token: str, request: Request) -> None:
+def _set_session_cookie(
+    response: Response,
+    token: str,
+    request: Request,
+    *,
+    max_age_seconds: int,
+) -> None:
     """Attach the session token as an HTTP-only SameSite=Strict cookie."""
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
-        max_age=int(SESSION_DURATION.total_seconds()),
+        max_age=max_age_seconds,
         httponly=True,
         secure=cookie_secure_for_request(request),
         samesite="strict",
         path="/",
+    )
+
+
+def _auth_policy(conn) -> tuple[timedelta, int, timedelta]:
+    settings = load_settings(conn)
+    return (
+        timedelta(hours=settings.session_duration_hours),
+        settings.max_failed_login_attempts,
+        timedelta(minutes=settings.rate_limit_window_minutes),
     )
 
 
@@ -179,6 +196,7 @@ def register(body: RegisterRequest, response: Response, request: Request) -> Use
     user_id = f"user_{uuid.uuid4().hex}"
 
     with get_conn() as conn:
+        session_duration, _max_failed_attempts, _rate_limit_window = _auth_policy(conn)
         existing = conn.execute(
             "SELECT 1 FROM users WHERE username_lower = ?",
             (username_lower,),
@@ -200,9 +218,14 @@ def register(body: RegisterRequest, response: Response, request: Request) -> Use
             # two concurrent registrations both pass the existence check above.
             raise HTTPException(status_code=409, detail="Username already taken")
 
-        token = _create_session(conn, user_id, now)
+        token = _create_session(conn, user_id, now, session_duration)
 
-    _set_session_cookie(response, token, request)
+    _set_session_cookie(
+        response,
+        token,
+        request,
+        max_age_seconds=int(session_duration.total_seconds()),
+    )
     return UserResponse(id=user_id, username=body.username, created_at=created_at)
 
 
@@ -267,12 +290,13 @@ def login(body: LoginRequest, response: Response, request: Request) -> UserRespo
     _verify_captcha(body.captcha_id, body.captcha_answer)
     username_lower = body.username.lower()
     now = datetime.now(timezone.utc)
-    window_start = now - RATE_LIMIT_WINDOW
 
     # 1. Rate-limit check (requirements 2.3, 2.4). Read-only, so no commit needed.
     with get_conn() as conn:
+        session_duration, max_failed_attempts, rate_limit_window = _auth_policy(conn)
+        window_start = now - rate_limit_window
         failed_count = _count_recent_failed_attempts(conn, username_lower, window_start)
-    if failed_count >= MAX_FAILED_LOGIN_ATTEMPTS:
+    if failed_count >= max_failed_attempts:
         raise HTTPException(
             status_code=429, detail="Too many attempts. Try again later."
         )
@@ -306,9 +330,14 @@ def login(body: LoginRequest, response: Response, request: Request) -> UserRespo
             "INSERT INTO login_attempts (username_lower, attempted_at, success) VALUES (?, ?, 1)",
             (username_lower, _format_timestamp(now)),
         )
-        token = _create_session(conn, user["id"], now)
+        token = _create_session(conn, user["id"], now, session_duration)
 
-    _set_session_cookie(response, token, request)
+    _set_session_cookie(
+        response,
+        token,
+        request,
+        max_age_seconds=int(session_duration.total_seconds()),
+    )
     return UserResponse(
         id=user["id"], username=user["username"], created_at=user["created_at"]
     )
