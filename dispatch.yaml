@@ -28,7 +28,7 @@ common_env:
 workers:
 - name: codex_gpt-5.5_1
   type: codex
-  enabled: false
+  enabled: true
   task_types:
   - bootstrap
   - reason
@@ -39,11 +39,11 @@ workers:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
     CODEX_MODEL: gpt-5.5
-    CODEX_BASE_URL: https://vsllm.com/v1
-    OPENAI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
+    CODEX_BASE_URL: 
+    OPENAI_API_KEY: sk-
 - name: codex_gpt-5.5_2
   type: codex
-  enabled: false
+  enabled: true
   task_types:
   - bootstrap
   - reason
@@ -54,11 +54,11 @@ workers:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
     CODEX_MODEL: gpt-5.5
-    CODEX_BASE_URL: https://vsllm.com/v1
-    OPENAI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
+    CODEX_BASE_URL: 
+    OPENAI_API_KEY: sk-
 - name: codex_gpt-5.5_3
   type: codex
-  enabled: false
+  enabled: true
   task_types:
   - bootstrap
   - reason
@@ -69,11 +69,11 @@ workers:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
     CODEX_MODEL: gpt-5.5
-    CODEX_BASE_URL: https://vsllm.com/v1
-    OPENAI_API_KEY: sk-5dlHx5L117eytpRcVxquAJquuS7rWbDezJ5Z6kCMSh93SCo9
+    CODEX_BASE_URL: 
+    OPENAI_API_KEY: sk-
 - name: deepseek-v4-pro-1
   type: pi
-  enabled: true
+  enabled: false
   task_types:
   - bootstrap
   - reason
@@ -84,12 +84,12 @@ workers:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
     PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: sk-6p8fnM1HRV_im8LI2F1v5A
+    PI_BASE_URL: 
+    PI_API_KEY: sk-
     PI_PROVIDER_API: openai-completions
 - name: deepseek-v4-pro-2
   type: pi
-  enabled: true
+  enabled: false
   task_types:
   - bootstrap
   - reason
@@ -100,12 +100,12 @@ workers:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
     PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: sk-6p8fnM1HRV_im8LI2F1v5A
+    PI_BASE_URL: 
+    PI_API_KEY: sk-
     PI_PROVIDER_API: openai-completions
 - name: deepseek-v4-pro-3
   type: pi
-  enabled: true
+  enabled: false
   task_types:
   - bootstrap
   - reason
@@ -115,7 +115,7 @@ workers:
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: sk-6p8fnM1HRV_im8LI2F1v5A
+    PI_MODEL: 
+    PI_BASE_URL: 
+    PI_API_KEY: sk-
     PI_PROVIDER_API: openai-completions
