@@ -3,9 +3,16 @@ from __future__ import annotations
 import logging
 import time
 
+from cairn.project_scope import build_scope_policy
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.contracts import parse_json_output, validate_explore_payload
-from cairn.dispatcher.prompting import load_prompt, render_prompt
+from cairn.dispatcher.prompting import (
+    format_project_context,
+    format_scope_policy,
+    format_user_assertions,
+    load_prompt,
+    render_prompt,
+)
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.containers import ContainerManager
@@ -94,6 +101,22 @@ def run_explore_task(
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "unhealthy"
 
+        facts = {fact.id: fact.description for fact in project.facts}
+        hints = [
+            {
+                "id": hint.id,
+                "content": hint.content,
+                "creator": hint.creator,
+                "created_at": hint.created_at,
+            }
+            for hint in project.hints
+        ]
+        scope_bundle = build_scope_policy(
+            project.project.id,
+            facts.get("origin", ""),
+            facts.get("goal", ""),
+            hints,
+        )
         prompt = render_prompt(
             load_prompt(config.runtime.prompt_group, "explore.md"),
             {
@@ -105,6 +128,9 @@ def run_explore_task(
                 ),
                 "intent_id": intent.id,
                 "intent_description": intent.description,
+                "project_context": format_project_context(scope_bundle["project_context"]),
+                "scope_policy": format_scope_policy(scope_bundle["scope_policy"]),
+                "user_assertions": format_user_assertions(scope_bundle["user_assertions"]),
             },
         )
 
@@ -171,9 +197,10 @@ def run_explore_task(
                     container_name,
                     worker,
                     driver,
-                    project.project.id,
+                    project,
                     intent,
                     export_yaml,
+                    scope_bundle,
                     session,
                     lease,
                     cancellation,
@@ -218,9 +245,10 @@ def run_explore_task(
                 container_name,
                 worker,
                 driver,
-                project.project.id,
+                project,
                 intent,
                 export_yaml,
+                scope_bundle,
                 session,
                 lease,
                 cancellation,
@@ -253,13 +281,15 @@ def _try_conclude_fallback(
     container_name: str,
     worker: WorkerConfig,
     driver,
-    project_id: str,
+    project: ProjectDetail,
     intent: Intent,
     export_yaml: str,
+    scope_bundle: dict[str, object],
     session: str | None,
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
 ) -> str:
+    project_id = project.project.id
     if not driver.supports_conclude() or not session:
         LOG.info(
             "conclude fallback unavailable project=%s intent=%s worker=%s supports_conclude=%s has_session=%s",
@@ -308,6 +338,9 @@ def _try_conclude_fallback(
             ),
             "intent_id": intent.id,
             "intent_description": intent.description,
+            "project_context": format_project_context(scope_bundle["project_context"]),
+            "scope_policy": format_scope_policy(scope_bundle["scope_policy"]),
+            "user_assertions": format_user_assertions(scope_bundle["user_assertions"]),
         },
     )
     conclude_argv = driver.build_conclude(worker, prompt, session)

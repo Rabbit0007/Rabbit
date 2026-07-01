@@ -56,6 +56,7 @@ class ContainerManager:
                 name=name,
                 network_mode=self._config.network_mode,
                 cap_add=self._config.cap_add or None,
+                extra_hosts=self._config.extra_hosts or None,
             )
             LOG.info("created container project=%s container=%s", project_id, name)
             return name
@@ -91,6 +92,7 @@ class ContainerManager:
                 name=name,
                 network_mode=self._config.network_mode,
                 cap_add=self._config.cap_add or None,
+                extra_hosts=self._config.extra_hosts or None,
             )
         except DockerException as exc:
             raise RuntimeError(f"failed to create startup container {name}: {exc}") from exc

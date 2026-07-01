@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
+from cairn.project_context_files import ensure_project_context_file
+from cairn.project_scope import scope_violation_detail
 from cairn.server.db import get_conn
 from cairn.server.models import (
     CompleteRequest,
@@ -37,6 +39,7 @@ from cairn.server.services import (
     validate_facts_exist,
     validate_goal_not_in_sources,
 )
+from cairn.server.scope_guard import evaluate_scope_for_description, has_scope_blocked_source_fact
 
 router = APIRouter(tags=["projects"])
 
@@ -101,6 +104,8 @@ def create_project(body: CreateProjectRequest):
                     (hid, pid, h.content, h.creator, now),
                 )
                 hints.append(Hint(id=hid, content=h.content, creator=h.creator, created_at=now))
+
+        ensure_project_context_file(pid, body.origin, body.goal)
 
         return ProjectDetail(
             project=ProjectMeta(id=pid, title=body.title, status="active", created_at=now, reason=None),
@@ -253,6 +258,11 @@ def complete_project(project_id: str, body: CompleteRequest):
         expire_reason_leases(conn, project_id)
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
+        if has_scope_blocked_source_fact(conn, project_id, body.from_):
+            raise HTTPException(422, "scope_blocked_source_fact")
+        scope_result, _, _, _ = evaluate_scope_for_description(conn, project_id, body.description)
+        if not scope_result.allowed:
+            raise HTTPException(422, scope_violation_detail(scope_result))
 
         now = utcnow()
         iid = next_intent_id(conn, project_id)

@@ -4,6 +4,7 @@ from datetime import datetime
 import yaml
 
 from cairn.server.db import get_conn
+from cairn.server.text_normalization import normalize_hint_content
 from cairn.server.services import expire_reason_leases, expire_workers, get_project_or_404
 
 router = APIRouter(tags=["export"])
@@ -69,7 +70,7 @@ def _export_yaml(conn, project_id: str) -> str:
     if hints:
         data["hints"] = [
             {
-                "content": h["content"],
+                "content": normalize_hint_content(h["content"]),
                 "creator": h["creator"],
                 "created_at": format_export_timestamp(h["created_at"]),
             }
@@ -114,7 +115,7 @@ def _export_timeline(conn, project_id: str) -> str:
 
     for h in hints:
         ts = format_export_timestamp(h["created_at"]) or ""
-        block = f"[{ts}] HINT by {h['creator']}\n  {h['content']}"
+        block = f"[{ts}] HINT by {h['creator']}\n  {normalize_hint_content(h['content'])}"
         events.append((h["created_at"] or "", order, block))
         order += 1
 

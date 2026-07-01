@@ -35,20 +35,20 @@ WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
 }
 
 DEFAULT_PROMPT_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
-    "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}"),
-    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}"),
-    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}"),
-    "bootstrap.md": ("{origin}", "{goal}", "{hints}"),
-    "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}"),
+    "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+    "bootstrap.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+    "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
 }
 
 PROMPT_REQUIRED_TOKENS_BY_GROUP: dict[str, dict[str, tuple[str, ...]]] = {
     "mock": {
-        "reason.md": ("{fact_ids}", "{open_intents}", "{max_intents}"),
-        "explore.md": ("{intent_id}",),
-        "explore_conclude.md": ("{intent_id}",),
-        "bootstrap.md": ("{origin}", "{goal}", "{hints}"),
-        "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}"),
+        "reason.md": ("{fact_ids}", "{open_intents}", "{max_intents}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+        "explore.md": ("{intent_id}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+        "explore_conclude.md": ("{intent_id}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+        "bootstrap.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
+        "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
     }
 }
 
@@ -153,6 +153,7 @@ class ContainerConfig(BaseModel):
     completed_action: CompletedAction
     cap_add: list[str] = Field(default_factory=list)
     name_prefix: str = Field(default="cairn-dispatch-", min_length=1)
+    extra_hosts: dict[str, str] = Field(default_factory=dict)
 
 
 class RuntimeConfig(BaseModel):

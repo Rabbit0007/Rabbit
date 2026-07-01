@@ -3,13 +3,21 @@ from __future__ import annotations
 import logging
 import time
 
+from cairn.project_scope import build_scope_policy
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.contracts import (
     parse_json_output,
     validate_bootstrap_conclude_payload,
     validate_bootstrap_execute_payload,
 )
-from cairn.dispatcher.prompting import format_hints, load_prompt, render_prompt
+from cairn.dispatcher.prompting import (
+    format_hints,
+    format_project_context,
+    format_scope_policy,
+    format_user_assertions,
+    load_prompt,
+    render_prompt,
+)
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.containers import ContainerManager
@@ -400,10 +408,19 @@ def _bootstrap_prompt_replacements(project: ProjectDetail) -> dict[str, str]:
         }
         for hint in project.hints
     ]
+    scope_bundle = build_scope_policy(
+        project.project.id,
+        facts.get("origin", ""),
+        facts.get("goal", ""),
+        hints,
+    )
     return {
         "origin": facts.get("origin", ""),
         "goal": facts.get("goal", ""),
         "hints": format_hints(hints),
+        "project_context": format_project_context(scope_bundle["project_context"]),
+        "scope_policy": format_scope_policy(scope_bundle["scope_policy"]),
+        "user_assertions": format_user_assertions(scope_bundle["user_assertions"]),
     }
 
 

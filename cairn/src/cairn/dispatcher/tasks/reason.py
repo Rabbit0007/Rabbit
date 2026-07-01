@@ -3,11 +3,15 @@ from __future__ import annotations
 import logging
 import time
 
+from cairn.project_scope import build_scope_policy
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
 from cairn.dispatcher.contracts import parse_json_output, validate_reason_payload
 from cairn.dispatcher.prompting import (
     format_fact_ids,
     format_open_intents,
+    format_project_context,
+    format_scope_policy,
+    format_user_assertions,
     load_prompt,
     render_prompt,
 )
@@ -99,6 +103,22 @@ def run_reason_task(
             if intent.to is None
         ]
         allowed_fact_ids = [fact.id for fact in project.facts if fact.id != "goal"]
+        facts = {fact.id: fact.description for fact in project.facts}
+        hints = [
+            {
+                "id": hint.id,
+                "content": hint.content,
+                "creator": hint.creator,
+                "created_at": hint.created_at,
+            }
+            for hint in project.hints
+        ]
+        scope_bundle = build_scope_policy(
+            project.project.id,
+            facts.get("origin", ""),
+            facts.get("goal", ""),
+            hints,
+        )
         LOG.debug(
             "reason context prepared project=%s worker=%s facts=%s allowed_fact_ids=%s hints=%s open_intents=%s",
             project.project.id,
@@ -120,6 +140,9 @@ def run_reason_task(
                 "fact_ids": format_fact_ids(allowed_fact_ids),
                 "open_intents": format_open_intents(open_intents),
                 "max_intents": str(config.tasks.reason.max_intents),
+                "project_context": format_project_context(scope_bundle["project_context"]),
+                "scope_policy": format_scope_policy(scope_bundle["scope_policy"]),
+                "user_assertions": format_user_assertions(scope_bundle["user_assertions"]),
             },
         )
 
@@ -214,6 +237,14 @@ def run_reason_task(
             if response.status_code == 403:
                 LOG.info("project became inactive during reason complete project=%s worker=%s", project.project.id, worker.name)
                 return "success"
+            if response.status_code == 422:
+                LOG.info(
+                    "reason completion blocked by scope policy project=%s worker=%s body=%s",
+                    project.project.id,
+                    worker.name,
+                    response.text,
+                )
+                return "success"
             if not response.ok:
                 LOG.warning(
                     "reason complete write failed project=%s worker=%s status=%s body=%s",
@@ -242,6 +273,15 @@ def run_reason_task(
                 if response.status_code == 409:
                     LOG.info("reason intent lost race project=%s worker=%s from=%s", project.project.id, worker.name, intent_data["from"])
                     continue
+                if response.status_code == 422:
+                    LOG.info(
+                        "reason intent blocked by scope policy project=%s worker=%s from=%s body=%s",
+                        project.project.id,
+                        worker.name,
+                        intent_data["from"],
+                        response.text,
+                    )
+                    continue
                 if not response.ok:
                     LOG.warning(
                         "reason intent write failed project=%s worker=%s status=%s body=%s",
@@ -268,7 +308,7 @@ def run_reason_task(
                 execute_ms,
                 total_ms,
             )
-            if created == 0:
+            if created == 0 and data:
                 LOG.warning(
                     "reason created no intents project=%s worker=%s attempted=%s execute_ms=%s total_ms=%s",
                     project.project.id,
@@ -277,7 +317,7 @@ def run_reason_task(
                     execute_ms,
                     total_ms,
                 )
-                return "failed"
+                return "success"
             return "success"
         LOG.info(
             "reason finished without graph change project=%s worker=%s execute_ms=%s total_ms=%s",

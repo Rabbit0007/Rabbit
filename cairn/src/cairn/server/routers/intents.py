@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from cairn.server.db import get_conn
 from cairn.server.models import (
@@ -8,6 +8,11 @@ from cairn.server.models import (
     Fact,
     HeartbeatRequest,
     Intent,
+)
+from cairn.server.scope_guard import (
+    blocked_scope_fact_description,
+    evaluate_scope_for_description,
+    has_scope_blocked_source_fact,
 )
 from cairn.server.services import (
     check_project_active,
@@ -21,6 +26,7 @@ from cairn.server.services import (
     validate_intent_creator_worker,
     validate_goal_not_in_sources,
 )
+from cairn.project_scope import scope_violation_detail
 
 router = APIRouter(tags=["intents"])
 
@@ -36,6 +42,11 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
         validate_intent_creator_worker(body.creator, body.worker)
+        if has_scope_blocked_source_fact(conn, project_id, body.from_):
+            raise HTTPException(422, "scope_blocked_source_fact")
+        scope_result, _, _, _ = evaluate_scope_for_description(conn, project_id, body.description)
+        if not scope_result.allowed:
+            raise HTTPException(422, scope_violation_detail(scope_result))
 
         now = utcnow()
         iid = next_intent_id(conn, project_id)
@@ -123,13 +134,17 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
         get_claimable_open_intent_or_404(conn, project_id, intent_id, body.worker)
+        scope_result, _, _, _ = evaluate_scope_for_description(conn, project_id, body.description)
+        fact_description = body.description
+        if not scope_result.allowed:
+            fact_description = blocked_scope_fact_description(conn, project_id)
 
         now = utcnow()
         fid = next_fact_id(conn, project_id)
 
         conn.execute(
             "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-            (fid, project_id, body.description),
+            (fid, project_id, fact_description),
         )
         conn.execute(
             "UPDATE intents SET to_fact_id = ?, worker = ?, last_heartbeat_at = ?, concluded_at = ? WHERE id = ? AND project_id = ?",
@@ -142,6 +157,6 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
         ).fetchone()
 
         return ConcludeResponse(
-            fact=Fact(id=fid, description=body.description),
+            fact=Fact(id=fid, description=fact_description),
             intent=intent_to_model(conn, updated, project_id),
         )

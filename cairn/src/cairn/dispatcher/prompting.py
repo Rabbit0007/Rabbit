@@ -28,5 +28,17 @@ def format_hints(hints: list[dict[str, Any]]) -> str:
     return format_json_block(hints)
 
 
+def format_project_context(context: dict[str, Any]) -> str:
+    return format_json_block(context)
+
+
+def format_scope_policy(policy: dict[str, Any]) -> str:
+    return format_json_block(policy)
+
+
+def format_user_assertions(assertions: list[dict[str, Any]]) -> str:
+    return format_json_block(assertions)
+
+
 def format_json_block(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)

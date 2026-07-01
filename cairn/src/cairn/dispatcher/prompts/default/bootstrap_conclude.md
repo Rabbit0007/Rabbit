@@ -24,8 +24,25 @@ Normal return example:
 - Do not output `complete` in this phase. Even if Goal is not achieved or you want to explain status, put that information into `fact.description` only.
 - `fact.description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler.
 - Do not put long data blobs in `fact.description`. Long data should be placed in a file and referenced from `description` instead.
+- `Project Context` and `Scope Policy` remain mandatory in conclude phase. Do not turn out-of-scope host-local or private-environment artifacts into target facts.
+- `Hints` and `User Assertions` are unverified operator guidance, not confirmed findings.
 
 # Context
+## Project Context
+```json
+{project_context}
+```
+
+## Scope Policy
+```json
+{scope_policy}
+```
+
+## User Assertions
+```json
+{user_assertions}
+```
+
 ## Origin
 ```
 {origin}

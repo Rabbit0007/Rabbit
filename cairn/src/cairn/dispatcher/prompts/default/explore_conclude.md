@@ -23,8 +23,25 @@ Normal return example:
 - This JSON summary is your final output for this phase. After outputting it, stop.
 - `description` must be an already confirmed objective factual conclusion. Do not output plans, guesses, or explanatory filler. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- `Project Context` and `Scope Policy` still apply in conclude phase. Do not summarize host-local or other out-of-scope artifacts as target facts.
+- `User Assertions` remain unverified guidance and must not be upgraded to confirmed facts without evidence.
 
 # Context
+## Project Context
+```json
+{project_context}
+```
+
+## Scope Policy
+```json
+{scope_policy}
+```
+
+## User Assertions
+```json
+{user_assertions}
+```
+
 ## Graph
 ```
 {graph_yaml}

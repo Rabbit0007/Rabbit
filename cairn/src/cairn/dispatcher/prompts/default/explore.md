@@ -20,8 +20,26 @@ Normal return example:
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this exploration instruction immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
 - `description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance Goal.
+- `Project Context` and `Scope Policy` are mandatory. Do not drift into localhost, host-side services, metadata endpoints, link-local, or unrelated private networks unless the scope explicitly allows them.
+- `User Assertions` are unverified leads. Validate them before treating them as facts.
+- If the current line of exploration hits an out-of-scope host-local artifact, stop that line and report only the in-scope conclusion that the branch is blocked or irrelevant.
 
 # Context
+## Project Context
+```json
+{project_context}
+```
+
+## Scope Policy
+```json
+{scope_policy}
+```
+
+## User Assertions
+```json
+{user_assertions}
+```
+
 ## Graph
 ```
 {graph_yaml}

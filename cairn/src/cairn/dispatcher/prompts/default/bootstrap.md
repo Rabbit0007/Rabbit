@@ -21,8 +21,26 @@ Only return the following after you have confirmed that Goal has been satisfied:
 - `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.
 - `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.
 - Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.
+- `Project Context` and `Scope Policy` are hard constraints. They outrank convenience, speculation, or any tempting side path.
+- `User Assertions` and `Hints` are not facts. Treat them as operator-provided leads that still require verification.
+- Never pivot into localhost, 127.0.0.0/8, ::1, host.docker.internal, host-side services, metadata endpoints, or unrelated private/link-local ranges unless `Scope Policy` explicitly allows them.
 
 # Context
+## Project Context
+```json
+{project_context}
+```
+
+## Scope Policy
+```json
+{scope_policy}
+```
+
+## User Assertions
+```json
+{user_assertions}
+```
+
 ## Origin
 ```
 {origin}

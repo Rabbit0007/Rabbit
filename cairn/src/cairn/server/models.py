@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from cairn.server.text_normalization import normalize_hint_content
+
 
 class Settings(BaseModel):
     intent_timeout: int = Field(ge=5)
@@ -44,6 +46,22 @@ class Hint(BaseModel):
     creator: str
     created_at: str
 
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        text = normalize_hint_content(value)
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("creator")
+    @classmethod
+    def normalize_creator(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
 
 class ProjectReason(BaseModel):
     worker: str
@@ -79,9 +97,17 @@ class CreateHintInline(BaseModel):
     content: str
     creator: str
 
-    @field_validator("content", "creator")
+    @field_validator("content")
     @classmethod
-    def validate_non_empty_text(cls, value: str) -> str:
+    def validate_content(cls, value: str) -> str:
+        text = normalize_hint_content(value)
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("creator")
+    @classmethod
+    def validate_creator(cls, value: str) -> str:
         text = value.strip()
         if not text:
             raise ValueError("must not be empty")
@@ -107,9 +133,17 @@ class CreateHintRequest(BaseModel):
     content: str
     creator: str
 
-    @field_validator("content", "creator")
+    @field_validator("content")
     @classmethod
-    def validate_non_empty_text(cls, value: str) -> str:
+    def validate_content(cls, value: str) -> str:
+        text = normalize_hint_content(value)
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("creator")
+    @classmethod
+    def validate_creator(cls, value: str) -> str:
         text = value.strip()
         if not text:
             raise ValueError("must not be empty")

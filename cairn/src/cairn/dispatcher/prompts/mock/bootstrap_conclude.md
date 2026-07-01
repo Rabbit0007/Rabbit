@@ -2,5 +2,8 @@
   "phase": "bootstrap_conclude",
   "origin": "{origin}",
   "goal": "{goal}",
-  "hints": {hints}
+  "hints": {hints},
+  "project_context": {project_context},
+  "scope_policy": {scope_policy},
+  "user_assertions": {user_assertions}
 }

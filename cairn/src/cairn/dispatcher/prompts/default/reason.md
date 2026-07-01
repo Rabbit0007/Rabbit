@@ -37,8 +37,26 @@ If Goal has not been satisfied and no new intent should currently be proposed, r
 - Each Intent should be a high-value exploration direction. It does not need to be overly detailed. Focus on the core insight and a clear direction. Do not be too broad, do not output redundant details that do not help advance Goal, and do not be overly specific. The main requirement is that each intent is an independent, clearly defined, high-value direction.
 - An Intent may originate from multiple facts.
 - Different intents should cover different exploration dimensions and avoid duplication or heavy overlap.
+- `Project Context` and `Scope Policy` are hard constraints. Never propose intents that pivot into localhost, host-side services, metadata endpoints, link-local, or unrelated private networks unless the scope explicitly permits that.
+- `User Assertions` are not facts. They are leads that may justify an intent, but they do not confirm anything on their own.
+- If the graph contains a fact that clearly marks a branch as scope-blocked or out-of-scope, treat that branch as a dead end and do not extend it.
 
 ## Context
+### Project Context
+```json
+{project_context}
+```
+
+### Scope Policy
+```json
+{scope_policy}
+```
+
+### User Assertions
+```json
+{user_assertions}
+```
+
 ### Graph
 ```
 {graph_yaml}
