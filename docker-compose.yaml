@@ -47,6 +47,11 @@ services:
       - ./dispatch.yaml:/cairn/dispatch.yaml
       - ./.rabbit:/cairn/.rabbit:ro
       - rabbit-pentest-artifacts:/audit-data
+    # Secrets are loaded from .env (git-ignored) so API keys never live in
+    # dispatch.yaml. dispatch.yaml references them as ${VAR_NAME}; the
+    # dispatcher expands them at config load time (see config.py).
+    env_file:
+      - .env
     environment:
       CAIRN_DISPATCHER_INTERNAL_API: "1"
       CAIRN_DISPATCHER_INTERNAL_HOST: "0.0.0.0"

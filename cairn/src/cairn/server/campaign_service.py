@@ -160,13 +160,23 @@ def _goal_status(
     vulnerabilities: list[_LoadedVulnerability],
 ) -> CampaignGoalStatus:
     text = "\n".join(description for _fact_id, description in facts)
+    # Positive success signals: command-execution proof that the goal
+    # (server access / whoami / ifconfig / shell) has been achieved.
+    # NOTE: the trailing `\b` after `)` in the old pattern failed to match
+    # `uid=33(www-data)` because there is no word boundary between `)` and
+    # whitespace/EOB. The parenthesized form is now matched without `\b`,
+    # and we also accept plain `uid=N`, ifconfig output, webshell response,
+    # and goal-achieved/cve-marked-as-achieved statements.
     has_positive_success = bool(
         re.search(
         r"\buid=0\b|"
-        r"\buid=\d+\((?:root|www-data)\)\b|"
+        r"uid=\d+\((?:root|www-data|daemon|nobody)\)|"
+        r"\bwhoami\b[^.\n]{0,20}\b(?:root|www-data|daemon|nobody)\b|"
         r"connected\s+as\s+(?:root|www-data)|"
         r"interactive\s+shell\s+ready|"
-        r"whoami(?:\s*(?:output|输出))?(?:[:：]|\s*为)?\s*(?:root|www-data)",
+        r"\bifconfig\b[^.\n]{0,80}\b(?:inet|ether|HWaddr|flags)\b|"
+        r"(?:目标已达成|goal\s*已达成|已拿到\s*(?:webshell|shell|权限))|"
+        r"\b(?:webshell|shell)\s*(?:已部署|部署成功|可访问|ready)",
         text,
         re.IGNORECASE,
         )

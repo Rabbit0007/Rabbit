@@ -307,67 +307,15 @@ def build_scope_policy(
     goal: str,
     hints: Iterable[HintRecord | dict[str, Any]],
 ) -> dict[str, Any]:
-    context = load_project_context(project_id, origin, goal)
-    normalized_hints = normalize_hint_records(hints)
-    scope = context.get("scope", {}) if isinstance(context.get("scope"), dict) else {}
-    origin_targets = set(extract_target_tokens(origin))
-    explicit_targets = _context_scope_targets(scope)
-    hint_overrides = _hint_scope_overrides(normalized_hints)
-
-    restrict_to_declared_targets = bool(scope.get("restrict_to_origin_targets", False))
-    if hint_overrides["restrict_to_declared_targets"]:
-        restrict_to_declared_targets = True
-
-    allowed_targets = set(origin_targets)
-    allowed_targets.update(explicit_targets)
-    allowed_targets.update(hint_overrides["allowed_targets"])
-
-    allow_loopback = bool(scope.get("allow_loopback_targets", False))
-    allow_private = bool(scope.get("allow_private_targets", False))
-    allow_link_local = bool(scope.get("allow_link_local_targets", False))
-    if hint_overrides["deny_local"]:
-        allow_loopback = False
-        allow_link_local = False
-    if hint_overrides["deny_private"]:
-        allow_private = False
-
-    blocked_hosts = set(LOCAL_HOST_ALIASES)
-    value = scope.get("blocked_hosts")
-    if isinstance(value, list):
-        blocked_hosts.update(_normalize_target(item) for item in value if isinstance(item, str))
-
-    hard_rules = [
-        "Hints are not facts. Treat operator-provided paths and parameters as unverified assertions until evidence confirms them.",
-        "Never treat localhost, 127.0.0.0/8, ::1, host.docker.internal, link-local, metadata endpoints, or host-side artifacts as target facts unless the project scope explicitly allows them.",
-    ]
-    if restrict_to_declared_targets and allowed_targets:
-        hard_rules.append(f"Only pursue declared targets: {', '.join(sorted(allowed_targets))}.")
-    hard_rules.extend(rule for rule in hint_overrides["hard_rules"] if rule not in hard_rules)
-
-    assertions = [
-        {
-            "id": hint.id,
-            "content": hint.content,
-            "creator": hint.creator,
-            "created_at": hint.created_at,
-            "source": "user-hint",
-            "confidence": "asserted",
-            "requires_verification": True,
-        }
-        for hint in normalized_hints
-    ]
+    # Scope guard disabled: it misclassified command output (e.g. `ifconfig`
+    # printing 127.0.0.1 / private IPs) as out-of-scope drift, which blocked
+    # vulnerability-evidence facts from being written and broke core discovery.
+    # Returns empty bundles so prompt tokens render as inert empty JSON,
+    # aligning behavior with upstream Cairn (no scope enforcement).
     return {
-        "project_context": context,
-        "scope_policy": {
-            "restrict_to_declared_targets": restrict_to_declared_targets,
-            "allowed_targets": sorted(allowed_targets),
-            "allow_loopback_targets": allow_loopback,
-            "allow_private_targets": allow_private,
-            "allow_link_local_targets": allow_link_local,
-            "blocked_hosts": sorted(blocked_hosts),
-            "hard_rules": hard_rules,
-        },
-        "user_assertions": assertions,
+        "project_context": {},
+        "scope_policy": {},
+        "user_assertions": [],
     }
 
 

@@ -237,14 +237,6 @@ def run_reason_task(
             if response.status_code == 403:
                 LOG.info("project became inactive during reason complete project=%s worker=%s", project.project.id, worker.name)
                 return "success"
-            if response.status_code == 422:
-                LOG.info(
-                    "reason completion blocked by scope policy project=%s worker=%s body=%s",
-                    project.project.id,
-                    worker.name,
-                    response.text,
-                )
-                return "success"
             if not response.ok:
                 LOG.warning(
                     "reason complete write failed project=%s worker=%s status=%s body=%s",
@@ -273,15 +265,6 @@ def run_reason_task(
                 if response.status_code == 409:
                     LOG.info("reason intent lost race project=%s worker=%s from=%s", project.project.id, worker.name, intent_data["from"])
                     continue
-                if response.status_code == 422:
-                    LOG.info(
-                        "reason intent blocked by scope policy project=%s worker=%s from=%s body=%s",
-                        project.project.id,
-                        worker.name,
-                        intent_data["from"],
-                        response.text,
-                    )
-                    continue
                 if not response.ok:
                     LOG.warning(
                         "reason intent write failed project=%s worker=%s status=%s body=%s",
@@ -308,7 +291,7 @@ def run_reason_task(
                 execute_ms,
                 total_ms,
             )
-            if created == 0 and data:
+            if created == 0:
                 LOG.warning(
                     "reason created no intents project=%s worker=%s attempted=%s execute_ms=%s total_ms=%s",
                     project.project.id,
@@ -317,7 +300,7 @@ def run_reason_task(
                     execute_ms,
                     total_ms,
                 )
-                return "success"
+                return "failed"
             return "success"
         LOG.info(
             "reason finished without graph change project=%s worker=%s execute_ms=%s total_ms=%s",

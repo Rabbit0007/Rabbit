@@ -377,7 +377,11 @@ def _request_parameters(context: str) -> list[tuple[str, str]]:
         context,
     ):
         name, value = match.group(1), match.group(2).strip("'\"")
-        if name.lower() in {"http", "https", "uid", "gid", "euid"} or name in seen:
+        # Exclude id-command output fields (uid/gid/euid/groups/context/sid)
+        # that appear in `id` / `whoami` / `groups` shell output, not HTTP
+        # params. Without this, `groups=33(www-data` from RCE proof text
+        # would be misread as a query parameter and produce a bogus request.
+        if name.lower() in {"http", "https", "uid", "gid", "euid", "groups", "context", "sid"} or name in seen:
             continue
         seen.add(name)
         params.append((name, value))

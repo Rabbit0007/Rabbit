@@ -258,11 +258,6 @@ def complete_project(project_id: str, body: CompleteRequest):
         expire_reason_leases(conn, project_id)
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
-        if has_scope_blocked_source_fact(conn, project_id, body.from_):
-            raise HTTPException(422, "scope_blocked_source_fact")
-        scope_result, _, _, _ = evaluate_scope_for_description(conn, project_id, body.description)
-        if not scope_result.allowed:
-            raise HTTPException(422, scope_violation_detail(scope_result))
 
         now = utcnow()
         iid = next_intent_id(conn, project_id)

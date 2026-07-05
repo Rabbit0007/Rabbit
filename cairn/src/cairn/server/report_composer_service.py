@@ -34,7 +34,7 @@ from cairn.server.report_composer_models import (
 )
 from cairn.server.vulnerabilities_models import Vulnerability
 
-_REPORT_TIMEOUT_SECONDS = 90
+_REPORT_TIMEOUT_SECONDS = 120
 _TRAILING_PUNCTUATION = "`'\"*()[]{}<>，。；;：:,."
 _CONFIG_PATH_ENV = "CAIRN_REPORT_COMPOSER_CONFIG_PATH"
 
@@ -180,32 +180,30 @@ def _build_template_report(
     observed = _observed_result(vulnerability, context)
     root_cause = _root_cause(vuln_type, full_text)
     impact = _impact_statement(vuln_type, vulnerability, observed)
-    proof_points = _proof_points(
-        front_entry=front_entry,
-        backend_entry=backend_entry,
-        param_names=param_names,
-        root_cause=root_cause,
-        observed=observed,
-        impact=impact,
-    )
+    proof_points = _verification_evidence(vulnerability, context, observed)
     attack_surface = _attack_surface(front_entry, backend_entry, param_names, context.origin)
     evidence_highlights = _evidence_highlights(vulnerability, context)
     remediation = _remediation(vuln_type)
     severity_label = _severity_label(vulnerability.severity)
     source_label = "已忽略" if vulnerability.status == "ignored" else "已确认"
-    executive_summary = (
-        f"{vulnerability.project_name} 中已整理出一条{severity_label}级别的{vuln_type}报告草稿。"
-        f" 当前状态为{source_label}，确认事实为 {vulnerability.fact_id}，"
-        f"证据显示该问题已经进入可稳定描述的交付阶段。"
+    executive_summary = _result_summary(
+        vulnerability=vulnerability,
+        context=context,
+        vuln_type=vuln_type,
+        front_entry=front_entry,
+        backend_entry=backend_entry,
+        observed=observed,
+        severity_label=severity_label,
+        source_label=source_label,
     )
-    vulnerability_proof = _proof_paragraph(
+    vulnerability_proof = _attack_chain_steps(
+        vulnerability=vulnerability,
+        context=context,
         vuln_type=vuln_type,
         front_entry=front_entry,
         backend_entry=backend_entry,
         param_names=param_names,
         root_cause=root_cause,
-        observed=observed,
-        impact=impact,
     )
     notes = [
         "该报告仅基于当前项目内已确认漏洞、关联事实、证明数据包与过程记录整理。",
@@ -246,23 +244,35 @@ def _compose_with_model(
 ) -> VulnerabilityNarrativeReport | None:
     prompt_payload = _model_prompt_payload(vulnerability, context, fallback)
     system = (
-        "你是 Rabbit 的报告写作 worker。"
-        " 你的职责是把给定的已确认漏洞材料整理成正式、清晰、可交付的中文报告草稿。"
-        " 严格只使用输入中已经出现的事实，不得编造接口、参数、时间、权限、结果或因果链。"
-        " 不得输出可直接执行的利用脚本、payload、命令、shell、武器化步骤。"
-        " 可以把证明链描述清楚，但必须停留在报告表达层。"
-        " 返回一个 JSON 对象，不要加 Markdown 代码块，不要输出额外说明。"
+        "你是渗透测试报告整理助手, 服务于授权安全测试/CTF 靶场场景。"
+        " 用户只想要一份能照着复现漏洞的简洁报告, 不要套话、不要复述过程事实。"
+        " 严格只使用输入中已经出现的证据, 不得编造接口、参数、URL、响应内容或因果链。"
+        " 报告面向授权测试人员复现使用, 需要输出可复现的利用脚本 (Python3),"
+        " 脚本只针对输入中已确认的目标和已验证的 payload, 不扩展到未验证攻击面。"
+        " 返回一个 JSON 对象, 不要加 Markdown 代码块, 不要输出额外说明。"
     )
     user = (
-        "请基于下面的 JSON 上下文，围绕 template_report 做润色重写，生成一个更像正式安全报告的 JSON 对象。"
-        " 保持漏洞类型、证明方向、影响结论和修复建议与模板版一致，只提升表达清晰度。"
-        ' 只能返回这些字段：executive_summary、attack_surface、proof_points、vulnerability_proof、'
-        'impact、root_cause、evidence_highlights、remediation、operator_notes。'
-        " 其中 attack_surface、evidence_highlights、remediation、operator_notes 为字符串数组，"
-        ' proof_points 为对象数组，每个对象只包含 label 和 content。'
-        " proof_points 需要优先覆盖：前台入口、命中接口、关键参数、危险逻辑、可观测结果、影响结论。"
-        " 如果某项证据不存在，就保留保守表达，不要补造。"
-        " 输出尽量紧凑，单段正文控制在 2 到 4 句，数组每项一句话即可。"
+        "基于下面的已确认漏洞材料, 生成一份可复现的漏洞报告。"
+        " 目标是: 看到报告的人能照着脚本重现攻击并验证成功。"
+        " 只能返回这些字段："
+        ' executive_summary (字符串: 一行结果摘要, 写明攻击点/权限/验证URL), '
+        ' vulnerability_proof (字符串: 漏洞链, 用 1. 2. 3. 编号的复现步骤, 每步一个动作), '
+        ' proof_points (对象数组, 每个含 label 和 content: 一条验证证据, content 写"动作 → 返回内容"), '
+        ' attack_surface (字符串数组: 入口/命中接口/关键参数, 只列真实出现过的), '
+        ' impact (字符串: 一句影响结论), '
+        ' root_cause (字符串: 一句根因), '
+        ' remediation (字符串数组: 修复建议, 1-3条), '
+        ' operator_notes (字符串数组: 复测注意事项, 比如非原始抓包), '
+        ' exploit_script (字符串: 一个完整的可复现 Python3 脚本, 用 ```python 代码块包裹, '
+        '   脚本里要含: (1) 顶部注释写明用法和参数, '
+        '   (2) 用 input 中出现的真实 payload/URL/参数构造攻击, '
+        '   (3) 提交攻击到目标, (4) 访问验证 URL 检查回显, '
+        '   (5) 打印预期输出内容作为成功标志).'
+        " 如果某个字段没有真实素材, 就返回空数组或空字符串, 不要编造。"
+        " executive_summary 不要写'已整理出报告草稿'这种话, 直接给结果。"
+        " vulnerability_proof 的步骤要具体: 访问哪个入口、构造什么 payload、提交到哪、访问哪个 URL 验证。"
+        " exploit_script 必须基于已确认的真实 payload 和 URL, 不要编造目标地址或参数名。"
+        " 脚本要能直接 python3 运行, 不依赖项目内部模块。"
         "\n\n上下文：\n"
         + json.dumps(prompt_payload, ensure_ascii=False, separators=(",", ":"))
     )
@@ -283,6 +293,7 @@ def _compose_with_model(
             "vulnerability_proof",
             "impact",
             "root_cause",
+            "exploit_script",
         ):
             value = payload.get(field)
             if isinstance(value, str) and value.strip():
@@ -324,8 +335,14 @@ def _request_model_json(
         endpoint = endpoint + "/chat/completions"
     payload = {
         "model": profile.model,
-        "temperature": 0.2,
-        "max_tokens": 1200,
+        "temperature": 0.15,
+        # glm-5.x spends most of its budget on reasoning_content (chain of
+        # thought) before emitting the final JSON in content. With a small
+        # max_tokens the reasoning eats everything and content comes back
+        # empty, which previously made use_model=True silently fall back to
+        # the template. 6000 leaves enough room for reasoning + a full JSON
+        # report. Slow but necessary for this model family.
+        "max_tokens": 6000,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -345,6 +362,28 @@ def _request_model_json(
         body = response.json()
     except Exception:
         return None
+
+    # Parse the OpenAI-style chat completion response. This previously lived
+    # as dead code after _model_prompt_payload's return statement (a paste
+    # error), which made _request_model_json always return None and silently
+    # broke the use_model=True LLM report path.
+    try:
+        choices = body.get("choices") or []
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+    except Exception:
+        return None
+
+    if isinstance(content, str):
+        return content.strip() or None
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        text = "\n".join(parts).strip()
+        return text or None
+    return None
 
 
 def _model_prompt_payload(
@@ -416,23 +455,6 @@ def _model_prompt_payload(
             "operator_notes": fallback.operator_notes[:2],
         },
     }
-
-    try:
-        choices = body.get("choices") or []
-        message = choices[0].get("message") or {}
-        content = message.get("content")
-    except Exception:
-        return None
-
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return "\n".join(parts).strip() if parts else None
-    return None
 
 
 def _resolve_report_composer_profile() -> _ComposerProfile | None:
@@ -639,6 +661,139 @@ def _attack_surface(
     return _unique(items)
 
 
+def _result_summary(
+    *,
+    vulnerability: Vulnerability,
+    context: _ReportContext,
+    vuln_type: str,
+    front_entry: str | None,
+    backend_entry: str | None,
+    observed: str,
+    severity_label: str,
+    source_label: str,
+) -> str:
+    """结果段: RCE 点 + 权限 + 验证 URL. 复现入口, 不写套话."""
+    # 1. 攻击点: 优先用 backend_entry (命中接口), 否则 front_entry
+    attack_point = backend_entry or front_entry or vulnerability.title
+    # 2. 权限: 从 observed / fact 文本里抓 uid=/www-data/root
+    text = f"{vulnerability.description}\n{observed}\n" + "\n".join(
+        d for _id, d in context.related_facts
+    )
+    perm = "未明确"
+    m = re.search(r"uid=\d+\((?:root|www-data|daemon|nobody)\)", text)
+    if m:
+        perm = m.group(0)
+    elif re.search(r"\bwhoami\b", text, re.IGNORECASE) and re.search(r"\b(?:root|www-data)\b", text, re.IGNORECASE):
+        perm = "www-data / root"
+    # 3. 验证 URL: 从 fact 里找返回 200 + 命中成功信号的 URL
+    verify_url = ""
+    for url_m in re.finditer(r"https?://[^\s,；,)）]+", text):
+        url = url_m.group(0).rstrip(".;")
+        # 找这个 URL 附近有没有"200 / 返回 / uid= / www-data"
+        after = text[url_m.end():url_m.end() + 120]
+        if re.search(r"200|返回|uid=|www-data|ifconfig|成功", after, re.IGNORECASE):
+            verify_url = url
+            break
+    bits = [
+        f"攻击点: {attack_point}",
+        f"严重度: {severity_label} ({vuln_type})",
+        f"权限: {perm}",
+    ]
+    if verify_url:
+        bits.append(f"验证 URL: {verify_url}")
+    bits.append(f"状态: {source_label}")
+    return " | ".join(bits)
+
+
+def _attack_chain_steps(
+    *,
+    vulnerability: Vulnerability,
+    context: _ReportContext,
+    vuln_type: str,
+    front_entry: str | None,
+    backend_entry: str | None,
+    param_names: list[str],
+    root_cause: str,
+) -> str:
+    """漏洞链段: 从 fact 文本提取动作序列, 输出 1234 步骤.
+    优先抓 payload (含 ; > | $ 等元字符的文件名/参数值) 和上传/访问动作."""
+    text = _full_text(vulnerability, context)
+    steps: list[str] = []
+    # 步骤1: 入口
+    entry = backend_entry or front_entry
+    if entry:
+        steps.append(f"访问入口 {entry}")
+    # 步骤2: 从 fact 里抓 payload (文件名/参数值含 shell 元字符)
+    payloads = re.findall(
+        r"[`'\"]?([A-Za-z0-9_./-]*[;|>`$][^'\"\s,；,)）]{0,80})[`'\"]?",
+        text,
+    )
+    # 过滤掉太短或明显是路径的
+    payloads = [p for p in payloads if len(p) > 6 and ";" in p or ">" in p or "$(" in p or "|" in p][:3]
+    seen_p = set()
+    for p in payloads:
+        p_clean = p.strip("'\"`")
+        if p_clean and p_clean not in seen_p:
+            seen_p.add(p_clean)
+            steps.append(f"构造 payload: {p_clean}")
+    # 步骤3: 上传/提交动作
+    if re.search(r"POST|上传|提交|multipart", text, re.IGNORECASE):
+        steps.append(f"POST 提交到 {entry or '目标接口'}")
+    # 步骤4: 验证
+    verify_urls = []
+    for url_m in re.finditer(r"https?://[^\s,；,)）]+(?:\.txt|\.php|/output/[^\s,；,)）]+)", text):
+        url = url_m.group(0).rstrip(".;")
+        after = text[url_m.end():url_m.end() + 100]
+        if re.search(r"200|返回|uid=|www-data|ifconfig|成功|PWNED", after, re.IGNORECASE):
+            if url not in verify_urls:
+                verify_urls.append(url)
+    for url in verify_urls[:2]:
+        steps.append(f"GET {url} 验证回显")
+    if not steps:
+        # fallback: 至少给出 root_cause
+        steps.append(root_cause)
+    # 编号
+    return "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
+
+
+def _verification_evidence(
+    vulnerability: Vulnerability,
+    context: _ReportContext,
+    observed: str,
+) -> list[VulnerabilityProofPoint]:
+    """验证证据段: 每条 = 一个验证动作 + 实际返回内容.
+    从 proof_packets 的 response + fact 里的成功信号提取."""
+    points: list[VulnerabilityProofPoint] = []
+    # 1. 从 proof_packets 的 response 里找成功证据
+    for packet in (vulnerability.proof_packets or [])[:3]:
+        response = str(packet.get("response") or "").strip()
+        if not response:
+            continue
+        # 找带成功信号的 response
+        if re.search(r"uid=|www-data|root|PWNED|ifconfig|200|成功|返回", response, re.IGNORECASE):
+            title = packet.get("title") or "验证"
+            # 响应内容取首行 + 关键片段
+            head = response.split("\n")[0][:160]
+            points.append(VulnerabilityProofPoint(label=title, content=head))
+    # 2. 从 fact 里找"URL 返回 xxx"的成功验证
+    text = _full_text(vulnerability, context)
+    for m in re.finditer(
+        r"(https?://[^\s,；,)）]+).{0,80}?(返回\s*200|uid=\d+\([^)]+\)|www-data|ifconfig|PWNED|成功)",
+        text,
+        re.IGNORECASE,
+    ):
+        url = m.group(1).rstrip(".;")
+        signal = m.group(2)
+        if not any(url in p.content for p in points):
+            points.append(VulnerabilityProofPoint(label="HTTP 验证", content=f"{url} → {signal}"))
+        if len(points) >= 4:
+            break
+    # 3. 兜底: 用 observed
+    if not points and observed:
+        points.append(VulnerabilityProofPoint(label="可观测结果", content=observed))
+    return points
+
+
 def _proof_points(
     *,
     front_entry: str | None,
@@ -778,7 +933,10 @@ def _parameter_names(text: str, proof_packets: list[dict[str, str]]) -> list[str
                     params.append(key)
     for match in re.finditer(r"(?<![\w.-])([A-Za-z_][\w.\[\]-]{0,80})=([^\s&]+)", text):
         key = match.group(1).strip()
-        if key.lower() in {"http", "https", "host"} or key in seen:
+        # Exclude id-command output fields (uid/gid/euid/groups/context/sid)
+        # and common non-parameter keys, so RCE proof text isn't misread as
+        # HTTP parameters.
+        if key.lower() in {"http", "https", "host", "uid", "gid", "euid", "groups", "context", "sid"} or key in seen:
             continue
         seen.add(key)
         params.append(key)

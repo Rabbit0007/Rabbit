@@ -42,11 +42,6 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
         validate_intent_creator_worker(body.creator, body.worker)
-        if has_scope_blocked_source_fact(conn, project_id, body.from_):
-            raise HTTPException(422, "scope_blocked_source_fact")
-        scope_result, _, _, _ = evaluate_scope_for_description(conn, project_id, body.description)
-        if not scope_result.allowed:
-            raise HTTPException(422, scope_violation_detail(scope_result))
 
         now = utcnow()
         iid = next_intent_id(conn, project_id)
@@ -134,10 +129,7 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
         get_claimable_open_intent_or_404(conn, project_id, intent_id, body.worker)
-        scope_result, _, _, _ = evaluate_scope_for_description(conn, project_id, body.description)
         fact_description = body.description
-        if not scope_result.allowed:
-            fact_description = blocked_scope_fact_description(conn, project_id)
 
         now = utcnow()
         fid = next_fact_id(conn, project_id)

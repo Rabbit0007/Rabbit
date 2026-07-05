@@ -118,7 +118,7 @@ export function MetricCard({ label, value, tone, icon: Icon, description, onClic
   const content = (
     <>
       <span className="metric-icon">
-        {Icon ? <Icon size={20} /> : <span className="metric-dot" />}
+        {Icon ? <Icon size={16} strokeWidth={1.75} /> : <span className="metric-dot" />}
       </span>
       <div className="metric-copy">
         <span>{label}</span>

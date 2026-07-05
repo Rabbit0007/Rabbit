@@ -10,10 +10,12 @@ import {
   ArrowLeft,
   Bot,
   CalendarDays,
+  Check,
   CheckCheck,
   CheckCircle2,
   ChevronLeft,
   ChevronDown,
+  Copy,
   ChevronRight,
   Circle,
   Clock,
@@ -164,8 +166,10 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
   const [theme, setTheme] = useState(() => {
-    if (typeof window === "undefined") return "light";
-    return window.localStorage.getItem("rabbit-theme") === "dark" ? "dark" : "light";
+    // Dark is the default (Terminal CLI aesthetic). Only flip to light when
+    // the user has explicitly opted into it; absent storage → dark.
+    if (typeof window === "undefined") return "dark";
+    return window.localStorage.getItem("rabbit-theme") === "light" ? "light" : "dark";
   });
   const runAction = useAsyncAction(setToast);
 
@@ -1418,51 +1422,58 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
     return filteredProjects.slice(start, start + pageSize);
   }, [filteredProjects, page, pageSize]);
 
+  // Campaign prefetch. Depends only on the stable id+status string of the
+  // visible projects — NOT on the campaign state maps. This prevents the
+  // effect from re-running when it itself mutates campaignByProjectId /
+  // campaignLoadingByProjectId (which previously caused a cancel/reload race
+  // that could strand a card in the "正在汇总" loading state).
+  const visibleProjectKey = visibleProjects.map((p) => `${p.id}:${p.status}`).join(",");
   useEffect(() => {
-    const missingProjects = visibleProjects.filter(
-      (project) => campaignByProjectId[project.id] === undefined && !campaignLoadingByProjectId[project.id],
-    );
-    if (!missingProjects.length) return undefined;
+    if (!visibleProjectKey) return undefined;
+    const ids = visibleProjects.map((p) => p.id);
 
     let cancelled = false;
-    const ids = missingProjects.map((project) => project.id);
-    setCampaignLoadingByProjectId((current) => ({
-      ...current,
-      ...Object.fromEntries(ids.map((id) => [id, true])),
-    }));
+    setCampaignLoadingByProjectId((current) => {
+      const next = { ...current };
+      ids.forEach((id) => {
+        next[id] = true;
+      });
+      return next;
+    });
 
     Promise.all(
-      missingProjects.map(async (project) => {
+      visibleProjects.map(async (project) => {
         try {
-          const campaign = await apiRequest(`/api/projects/${project.id}/campaign`);
+          // Race against a timeout so a hung endpoint can never lock the card.
+          const campaign = await Promise.race([
+            apiRequest(`/api/projects/${project.id}/campaign`),
+            new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+          ]);
           return [project.id, campaign];
         } catch {
           return [project.id, null];
         }
       }),
-    )
-      .then((entries) => {
-        if (cancelled) return;
-        setCampaignByProjectId((current) => ({
-          ...current,
-          ...Object.fromEntries(entries),
-        }));
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setCampaignLoadingByProjectId((current) => {
-          const next = { ...current };
-          ids.forEach((id) => {
-            delete next[id];
-          });
-          return next;
+    ).then((entries) => {
+      if (cancelled) return;
+      setCampaignByProjectId((current) => ({
+        ...current,
+        ...Object.fromEntries(entries),
+      }));
+      setCampaignLoadingByProjectId((current) => {
+        const next = { ...current };
+        ids.forEach((id) => {
+          delete next[id];
         });
+        return next;
       });
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [visibleProjects, campaignByProjectId, campaignLoadingByProjectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleProjectKey]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
@@ -2429,6 +2440,203 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     return [...nodes, ...edges];
   }, [detail]);
 
+  // Full re-layout, used when the user switches layout engine and when
+  // updateGraph finds structural changes. Ported from Cairn core layoutOpts().
+  const runLayout = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const direction = layout.endsWith("_lr") ? "LR" : "TB";
+    const engine = layout.startsWith("elk") ? "elk" : layout.startsWith("klay") ? "klay" : "dagre";
+    let options;
+
+    if (engine === "elk") {
+      options = {
+        name: "elk",
+        fit: true,
+        padding: 50,
+        animate: true,
+        animationDuration: 350,
+        animationEasing: "ease-in-out-cubic",
+        elk: {
+          algorithm: "layered",
+          "elk.direction": direction === "TB" ? "DOWN" : "RIGHT",
+          "elk.aspectRatio": "1.5",
+          "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+          "elk.spacing.nodeNode": "50",
+          "elk.layered.spacing.nodeNodeBetweenLayers": "80",
+          "elk.spacing.edgeNode": "25",
+          "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+          "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+        },
+      };
+    } else if (engine === "klay") {
+      options = {
+        name: "klay",
+        fit: true,
+        padding: 50,
+        animate: true,
+        animationDuration: 400,
+        animationEasing: "ease-in-out-cubic",
+        klay: {
+          direction: direction === "TB" ? "DOWN" : "RIGHT",
+          edgeRouting: "POLYLINE",
+          crossingMinimization: "LAYER_SWEEP",
+          nodeLayering: "NETWORK_SIMPLEX",
+          nodePlacement: "BRANDES_KOEPF",
+          separateConnectedComponents: true,
+          spacing: direction === "LR" ? 52 : 40,
+          inLayerSpacingFactor: direction === "LR" ? 1.15 : 1.0,
+          thoroughness: 8,
+        },
+      };
+    } else {
+      options = {
+        name: "dagre",
+        rankDir: direction,
+        nodeSep: 60,
+        rankSep: 80,
+        padding: 50,
+        fit: true,
+        animate: true,
+        animationDuration: 400,
+        animationEasing: "ease-in-out-cubic",
+      };
+    }
+    cy.layout(options).run();
+    window.setTimeout(() => {
+      if (!cyRef.current) return;
+      cyRef.current.fit(cyRef.current.elements(), 50);
+    }, 80);
+  }, [layout]);
+
+  // Incremental graph update — ported from Cairn core (index.html updateGraph).
+  // Diffs the desired elements against the live cy instance instead of destroying
+  // and recreating it, so a 5s poll no longer visually flashes the whole graph.
+  const snapshotNodePositions = useCallback(() => {
+    const positions = new Map();
+    const cy = cyRef.current;
+    if (!cy) return positions;
+    cy.nodes().forEach((node) => {
+      positions.set(node.id(), { x: node.position("x"), y: node.position("y") });
+    });
+    return positions;
+  }, []);
+
+  const anchorPositionFromIds = useCallback(
+    (nodeIds, previousPositions, offset = 36) => {
+      const cy = cyRef.current;
+      const anchors = [];
+      for (const nodeId of nodeIds) {
+        const existing = cy?.getElementById(nodeId);
+        if (existing?.length) {
+          anchors.push({ x: existing.position("x"), y: existing.position("y") });
+          continue;
+        }
+        const previous = previousPositions.get(nodeId);
+        if (previous) anchors.push(previous);
+      }
+      if (anchors.length === 0) return null;
+      const center = anchors.reduce((acc, pos) => ({ x: acc.x + pos.x, y: acc.y + pos.y }), { x: 0, y: 0 });
+      const avg = { x: center.x / anchors.length, y: center.y / anchors.length };
+      return layout.endsWith("_lr") ? { x: avg.x + offset, y: avg.y } : { x: avg.x, y: avg.y + offset };
+    },
+    [layout],
+  );
+
+  const initialPositionForNode = useCallback(
+    (nodeData, previousPositions) => {
+      if (nodeData.intentId) {
+        const previousPlaceholder = previousPositions.get(nodeData.id);
+        if (previousPlaceholder) return previousPlaceholder;
+        const intent = detail.intents.find((item) => item.id === nodeData.intentId);
+        return intent ? anchorPositionFromIds(intent.from, previousPositions, 32) : null;
+      }
+      const producingIntent = detail.intents.find((item) => item.to === nodeData.id);
+      if (!producingIntent) return null;
+      const placeholderPosition = previousPositions.get(`_ph_${producingIntent.id}`);
+      if (placeholderPosition) return placeholderPosition;
+      return anchorPositionFromIds(producingIntent.from, previousPositions, 44);
+    },
+    [anchorPositionFromIds, detail.intents],
+  );
+
+  const fadeInFreshElement = useCallback((element) => {
+    if (!element || element.length === 0) return;
+    element.style("opacity", 0);
+    setTimeout(() => {
+      if (!element.inside()) return;
+      element.animate(
+        { style: { opacity: 1 } },
+        {
+          duration: 500,
+          complete: () => {
+            if (!element.inside()) return;
+            element.removeStyle("opacity");
+          },
+        },
+      );
+    }, 30);
+  }, []);
+
+  const updateGraph = useCallback(
+    (nextElements) => {
+      const cy = cyRef.current;
+      if (!cy) return;
+      const nodes = nextElements.filter((el) => el && el.data && (!el.data.source || !el.data.target));
+      const edges = nextElements.filter((el) => el && el.data && el.data.source && el.data.target);
+      const wantNodes = new Set(nodes.map((n) => n.data.id));
+      const wantEdges = new Set(edges.map((e) => e.data.id));
+      const previousPositions = snapshotNodePositions();
+      let changed = false;
+
+      cy.nodes().forEach((n) => {
+        if (!wantNodes.has(n.id())) {
+          n.remove();
+          changed = true;
+        }
+      });
+      cy.edges().forEach((e) => {
+        if (!wantEdges.has(e.id())) {
+          e.remove();
+          changed = true;
+        }
+      });
+
+      for (const n of nodes) {
+        const ex = cy.getElementById(n.data.id);
+        if (ex.length === 0) {
+          const initialPosition = initialPositionForNode(n.data, previousPositions);
+          const added = cy.add(initialPosition ? { ...n, position: initialPosition } : n);
+          fadeInFreshElement(added);
+          changed = true;
+        } else if (
+          ex.data("nodeType") !== n.data.nodeType ||
+          ex.data("label") !== n.data.label ||
+          ex.data("description") !== n.data.description ||
+          ex.data("width") !== n.data.width ||
+          ex.data("height") !== n.data.height
+        ) {
+          ex.data(n.data);
+          changed = true;
+        }
+      }
+      for (const e of edges) {
+        const ex = cy.getElementById(e.data.id);
+        if (ex.length === 0) {
+          const added = cy.add(e);
+          fadeInFreshElement(added);
+          changed = true;
+        } else if (ex.data("status") !== e.data.status) {
+          ex.data(e.data);
+        }
+      }
+      if (changed) {
+        runLayout();
+      }
+    },
+    [snapshotNodePositions, initialPositionForNode, fadeInFreshElement, layout],
+  );
+
   useEffect(() => {
     if (!containerRef.current) return undefined;
     const cy = cytoscape({
@@ -2446,7 +2654,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             shape: "round-rectangle",
             "background-color": "#14b8a6",
             color: "#fff",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 11,
             "font-weight": "bold",
             "text-wrap": "wrap",
@@ -2466,7 +2674,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             shape: "round-rectangle",
             "background-color": "#f43f5e",
             color: "#fff",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 11,
             "font-weight": "bold",
             "text-wrap": "wrap",
@@ -2486,7 +2694,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             shape: "round-rectangle",
             "background-color": "#6366f1",
             color: "#fff",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 10,
             "font-weight": "bold",
             "text-wrap": "wrap",
@@ -2507,7 +2715,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             "background-color": "#f59e0b",
             "background-opacity": 0.8,
             color: "#fff",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 11,
             "font-weight": "bold",
             width: 22,
@@ -2524,7 +2732,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             "background-color": "#cbd5e1",
             "background-opacity": 0.5,
             color: "#94a3b8",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 11,
             "font-weight": "bold",
             width: 20,
@@ -2537,13 +2745,13 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
         {
           selector: 'node[nodeType="bootstrap_pending"]',
           style: {
-            "background-color": "#fff7ed",
+            "background-color": "#1c212b",
             "background-opacity": 0.96,
             label: "data(label)",
-            "border-color": "#fdba74",
-            color: "#c2410c",
+            "border-color": "#f59e0b",
+            color: "#fdba74",
             shape: "round-rectangle",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 10,
             "font-weight": "bold",
             width: "data(width)",
@@ -2565,7 +2773,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             "border-color": "#ea580c",
             color: "#fff7ed",
             shape: "round-rectangle",
-            "font-family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            "font-family": "var(--sans)",
             "font-size": 10,
             "font-weight": "bold",
             width: "data(width)",
@@ -2776,74 +2984,21 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       cy.destroy();
       cyRef.current = null;
     };
-  }, [elements, detail.facts, onSelect]);
+  }, [onSelect]);
 
+  // Data update: diff the desired elements into the live cy instance.
+  // Replaces the previous "destroy + recreate on every poll" behavior so the
+  // graph no longer visually flashes every 5s.
   useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    const direction = layout.endsWith("_lr") ? "LR" : "TB";
-    const engine = layout.startsWith("elk") ? "elk" : layout.startsWith("klay") ? "klay" : "dagre";
-    let options;
+    if (!cyRef.current) return;
+    updateGraph(elements);
+  }, [elements, updateGraph]);
 
-    if (engine === "elk") {
-      options = {
-        name: "elk",
-        fit: true,
-        padding: 50,
-        animate: true,
-        animationDuration: 350,
-        animationEasing: "ease-in-out-cubic",
-        elk: {
-          algorithm: "layered",
-          "elk.direction": direction === "TB" ? "DOWN" : "RIGHT",
-          "elk.aspectRatio": "1.5",
-          "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
-          "elk.spacing.nodeNode": "50",
-          "elk.layered.spacing.nodeNodeBetweenLayers": "80",
-          "elk.spacing.edgeNode": "25",
-          "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
-          "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
-        },
-      };
-    } else if (engine === "klay") {
-      options = {
-        name: "klay",
-        fit: true,
-        padding: 50,
-        animate: true,
-        animationDuration: 400,
-        animationEasing: "ease-in-out-cubic",
-        klay: {
-          direction: direction === "TB" ? "DOWN" : "RIGHT",
-          edgeRouting: "POLYLINE",
-          crossingMinimization: "LAYER_SWEEP",
-          nodeLayering: "NETWORK_SIMPLEX",
-          nodePlacement: "BRANDES_KOEPF",
-          separateConnectedComponents: true,
-          spacing: direction === "LR" ? 52 : 40,
-          inLayerSpacingFactor: direction === "LR" ? 1.15 : 1.0,
-          thoroughness: 8,
-        },
-      };
-    } else {
-      options = {
-        name: "dagre",
-        rankDir: direction,
-        nodeSep: 60,
-        rankSep: 80,
-        padding: 50,
-        fit: true,
-        animate: true,
-        animationDuration: 400,
-        animationEasing: "ease-in-out-cubic",
-      };
-    }
-    cy.layout(options).run();
-    window.setTimeout(() => {
-      if (!cyRef.current) return;
-      cyRef.current.fit(cyRef.current.elements(), 50);
-    }, 80);
-  }, [layout, elements]);
+  // Full re-layout only when the user switches layout engine.
+  useEffect(() => {
+    if (!cyRef.current) return;
+    runLayout();
+  }, [runLayout]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -3531,6 +3686,25 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
   const statusDistribution = useMemo(() => buildStatusDistribution(visibleVulnerabilities), [visibleVulnerabilities]);
   const visibleIds = useMemo(() => visibleVulnerabilities.map((item) => item.id), [visibleVulnerabilities]);
   const pageIds = useMemo(() => pagedVulnerabilities.map((item) => item.id), [pagedVulnerabilities]);
+
+  // Active filter chips: each non-empty filter becomes a removable chip.
+  // The clear fn drops just that one key, preserving the rest.
+  const activeFilterChips = useMemo(() => {
+    const chips = [];
+    if (filters.project_id) {
+      const proj = projects.find((p) => p.id === filters.project_id);
+      chips.push({ key: "project_id", label: proj ? proj.title : filters.project_id });
+    }
+    const sev = viewSeverity || filters.severity;
+    if (sev) chips.push({ key: "severity", label: SEVERITY_META[sev]?.label || sev });
+    const st = viewStatus || filters.status;
+    if (st) chips.push({ key: "status", label: st === "confirmed" ? "已确认" : "已忽略" });
+    if (filters.date_from) chips.push({ key: "date_from", label: `起 ${filters.date_from}` });
+    if (filters.date_to) chips.push({ key: "date_to", label: `止 ${filters.date_to}` });
+    return chips;
+  }, [filters, projects, viewSeverity, viewStatus]);
+
+  const clearFilter = (key) => setFilters((prev) => ({ ...prev, [key]: "" }));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
   const detailVuln = useMemo(
@@ -3624,81 +3798,105 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
           <VulnerabilitySummaryCard icon={ShieldCheck} label="低危漏洞" value={visibleSummary.low || 0} tone="low" />
           <VulnerabilitySummaryCard icon={CheckCheck} label="已确认" value={statusDistribution.confirmed || 0} tone="success" />
         </div>
-        <div className="report-filter-bar">
-          <label className="filter-search">
-            <Search size={15} />
-            <input
-              value={filters.search}
-              onChange={(event) => setFilters({ ...filters, search: event.target.value })}
-              placeholder="搜索漏洞标题、编号、项目、标签..."
-            />
-          </label>
-          <label className="filter-field">
-            <span>项目</span>
-            <select value={filters.project_id} onChange={(event) => setFilters({ ...filters, project_id: event.target.value })}>
-              <option value="">全部项目</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="filter-field">
-            <span>严重程度</span>
-            <select
-              value={viewSeverity || filters.severity}
-              disabled={!!viewSeverity}
-              onChange={(event) => setFilters({ ...filters, severity: event.target.value })}
+        <div className="vuln-filter-bar">
+          <div className="vuln-search-row">
+            <label className="vuln-search">
+              <Search size={15} />
+              <input
+                value={filters.search}
+                onChange={(event) => setFilters({ ...filters, search: event.target.value })}
+                placeholder="搜索漏洞标题、编号、项目、标签..."
+              />
+              {filters.search && (
+                <button
+                  type="button"
+                  className="vuln-search-clear"
+                  aria-label="清除搜索"
+                  onClick={() => setFilters((prev) => ({ ...prev, search: "" }))}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </label>
+            <span className="vuln-result-count">
+              {filteredVulnCount > 0
+                ? `${filteredVulnCount} 条结果`
+                : "无匹配结果"}
+            </span>
+            <button
+              className="ghost-button compact filter-reset"
+              type="button"
+              disabled={!filteredVulnCount && !filters.search && activeFilterChips.length === 0}
+              onClick={() => setFilters({ severity: "", project_id: "", status: "", search: "", date_from: "", date_to: "" })}
             >
-              <option value="">全部</option>
-              {Object.entries(SEVERITY_META).map(([key, meta]) => (
-                <option key={key} value={key}>
-                  {meta.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="filter-field">
-            <span>状态</span>
-            <select
-              value={viewStatus || filters.status}
-              disabled={!!viewStatus}
-              onChange={(event) => setFilters({ ...filters, status: event.target.value })}
-            >
-              <option value="">全部状态</option>
-              <option value="confirmed">已确认</option>
-              <option value="ignored">已忽略</option>
-            </select>
-          </label>
-          <label className="filter-field date-field">
-            <span>发现时间</span>
-            <div className="date-range-control">
+              <X size={14} />
+              重置
+            </button>
+          </div>
+          <div className="vuln-filter-row">
+            <label className="vuln-filter-field">
+              <select value={filters.project_id} onChange={(event) => setFilters({ ...filters, project_id: event.target.value })}>
+                <option value="">项目</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="vuln-filter-field">
+              <select
+                value={viewSeverity || filters.severity}
+                disabled={!!viewSeverity}
+                onChange={(event) => setFilters({ ...filters, severity: event.target.value })}
+              >
+                <option value="">严重程度</option>
+                {Object.entries(SEVERITY_META).map(([key, meta]) => (
+                  <option key={key} value={key}>
+                    {meta.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="vuln-filter-field">
+              <select
+                value={viewStatus || filters.status}
+                disabled={!!viewStatus}
+                onChange={(event) => setFilters({ ...filters, status: event.target.value })}
+              >
+                <option value="">状态</option>
+                <option value="confirmed">已确认</option>
+                <option value="ignored">已忽略</option>
+              </select>
+            </label>
+            <label className="vuln-filter-field vuln-date-field">
               <input
                 type="date"
                 value={filters.date_from}
                 max={filters.date_to || undefined}
                 onChange={(event) => setFilters({ ...filters, date_from: event.target.value })}
               />
-              <span className="date-range-separator">
-                <ChevronRight size={14} />
-              </span>
+              <span className="vuln-date-sep"><ChevronRight size={12} /></span>
               <input
                 type="date"
                 value={filters.date_to}
                 min={filters.date_from || undefined}
                 onChange={(event) => setFilters({ ...filters, date_to: event.target.value })}
               />
-            </div>
-          </label>
-          <button
-            className="ghost-button compact filter-reset"
-            type="button"
-            onClick={() => setFilters({ severity: "", project_id: "", status: "", search: "", date_from: "", date_to: "" })}
-          >
-            <X size={15} />
-            重置
-          </button>
+            </label>
+            {activeFilterChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                className="vuln-chip"
+                onClick={() => clearFilter(chip.key)}
+                title="点击移除该筛选"
+              >
+                {chip.label}
+                <X size={12} />
+              </button>
+            ))}
+          </div>
         </div>
         {loading ? (
           <EmptyState icon={Loader2} title="正在分析漏洞报告" />
@@ -4299,25 +4497,24 @@ function VulnerabilityItem({ vuln, selected, active, onSelect, onOpen, onExport,
             <Eye size={14} />
             详情
           </button>
-          <details className="table-row-menu" onClick={(event) => event.stopPropagation()}>
-            <summary className="table-inline-action" aria-label="更多操作">
-              <MoreVertical size={14} />
-              更多
-            </summary>
-            <div className="table-row-menu-panel">
-              <button type="button" onClick={onExport}>
-                <Download size={14} />
-                导出
-              </button>
-              <button
-                type="button"
-                onClick={() => onStatusChange(ignored ? "confirmed" : "ignored")}
-              >
-                {ignored ? <CheckCircle2 size={14} /> : <X size={14} />}
-                {ignored ? "恢复确认" : "设为忽略"}
-              </button>
-            </div>
-          </details>
+          <button
+            className="table-inline-action"
+            type="button"
+            onClick={onExport}
+            title="导出"
+            aria-label="导出"
+          >
+            <Download size={14} />
+          </button>
+          <button
+            className={cn("table-inline-action", ignored ? "success" : "warning")}
+            type="button"
+            onClick={() => onStatusChange(ignored ? "confirmed" : "ignored")}
+            title={ignored ? "恢复确认" : "设为忽略"}
+            aria-label={ignored ? "恢复确认" : "设为忽略"}
+          >
+            {ignored ? <CheckCircle2 size={14} /> : <X size={14} />}
+          </button>
         </div>
       </div>
     </article>
@@ -4332,6 +4529,18 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
   const [reportRefreshing, setReportRefreshing] = useState(false);
   const [reportError, setReportError] = useState("");
   const [reportHint, setReportHint] = useState("");
+
+  // Anchor nav: scroll a section into view inside the drawer content pane.
+  // Uses button onClick (not <a href="#id">) so we don't mutate the URL hash,
+  // which would be picked up by the hash router and navigate away.
+  const scrollDrawerTo = useCallback((sectionId) => {
+    const el = document.getElementById(sectionId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    // briefly highlight the target section for affordance
+    el.classList.add("drawer-section-flash");
+    window.setTimeout(() => el.classList.remove("drawer-section-flash"), 700);
+  }, []);
 
   const regenerateReportDraft = useCallback(async () => {
     setReportRefreshing(true);
@@ -4428,90 +4637,100 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
         <header className="drawer-header">
           <div className="drawer-heading">
             <div className="drawer-kicker">
-              <span>{vuln.fact_id}</span>
+              <span className="drawer-fact-id">{vuln.fact_id}</span>
               <Badge tone={meta.tone}>{meta.label}</Badge>
               <Badge tone={ignored ? "muted" : "success"}>{ignored ? "已忽略" : "已确认"}</Badge>
             </div>
             <h2>{vuln.title}</h2>
             <p>
-              {vuln.project_name} · {vuln.project_id} · 发现于 {formatTime(vuln.discovered_at)}
+              {vuln.project_name} · <span className="mono">{vuln.project_id}</span> · 发现于 {formatTime(vuln.discovered_at)}
             </p>
           </div>
           <button className="icon-button drawer-close" type="button" onClick={onClose} aria-label="关闭详情">
             <X size={18} />
           </button>
         </header>
-        <div className="drawer-body">
-          <VulnerabilityNarrativeCard
-            report={reportDraft}
-            loading={reportLoading}
-            refreshing={reportRefreshing}
-            error={reportError}
-            hint={reportHint}
-            onRefresh={regenerateReportDraft}
-          />
-          <div className="drawer-info-grid">
-            <InfoBox label="所属项目" value={`${vuln.project_name} (${vuln.project_id})`} />
-            <InfoBox label="确认事实" value={vuln.fact_id} />
-            <InfoBox label="来源意图" value={vuln.source_intent_id || "-"} />
-            <InfoBox label="工作节点" value={vuln.source_worker || "-"} />
+        <div className="drawer-body drawer-dual">
+          <nav className="drawer-anchor-nav" aria-label="漏洞详情导航">
+            <button type="button" className="drawer-anchor-link" onClick={() => scrollDrawerTo("vuln-narrative")}>交付草稿</button>
+            <button type="button" className="drawer-anchor-link" onClick={() => scrollDrawerTo("vuln-info")}>基本信息</button>
+            <button type="button" className="drawer-anchor-link" onClick={() => scrollDrawerTo("vuln-description")}>证明说明</button>
+            <button type="button" className="drawer-anchor-link" onClick={() => scrollDrawerTo("vuln-evidence")}>关键证据</button>
+            <button type="button" className="drawer-anchor-link" onClick={() => scrollDrawerTo("vuln-packets")}>证明数据包</button>
+            <button type="button" className="drawer-anchor-link" onClick={() => scrollDrawerTo("vuln-process")}>浮现过程</button>
+          </nav>
+          <div className="drawer-content">
+            <section id="vuln-narrative" className="drawer-section">
+              <VulnerabilityNarrativeCard
+                report={reportDraft}
+                loading={reportLoading}
+                refreshing={reportRefreshing}
+                error={reportError}
+                hint={reportHint}
+                onRefresh={regenerateReportDraft}
+              />
+            </section>
+            <section id="vuln-info" className="drawer-section">
+              <h4>基本信息</h4>
+              <div className="drawer-info-grid">
+                <InfoBox label="所属项目" value={`${vuln.project_name} (${vuln.project_id})`} />
+                <InfoBox label="确认事实" value={vuln.fact_id} />
+                <InfoBox label="来源意图" value={vuln.source_intent_id || "-"} />
+                <InfoBox label="工作节点" value={vuln.source_worker || "-"} />
+              </div>
+            </section>
+            <section id="vuln-description" className="drawer-section">
+              <h4>证明说明</h4>
+              <p className="soft-box">{vuln.description || "未记录"}</p>
+            </section>
+            <section id="vuln-evidence" className="drawer-section">
+              <h4>关键证据</h4>
+              <div className="evidence-list">
+                {(vuln.evidence?.length ? vuln.evidence : ["未记录"]).map((item, index) => (
+                  <p key={`${item}-${index}`}>{item}</p>
+                ))}
+              </div>
+            </section>
+            <section id="vuln-packets" className="drawer-section">
+              <h4>漏洞证明数据包</h4>
+              <div className="packet-list">
+                {(vuln.proof_packets || []).length === 0 ? (
+                  <p className="soft-box">未记录证明数据包。</p>
+                ) : (
+                  vuln.proof_packets.map((packet, index) => (
+                    <ProofPacket key={`${packet.title}-${index}`} packet={packet} index={index} />
+                  ))
+                )}
+              </div>
+            </section>
+            <section id="vuln-process" className="drawer-section">
+              <h4>漏洞浮现过程</h4>
+              <div className="process-list">
+                {(vuln.process || []).length === 0 ? (
+                  <p className="soft-box">未记录漏洞浮现过程。</p>
+                ) : (
+                  (vuln.process || []).map((step, index) => (
+                    <article className="process-step" key={`${step.id}-${index}`}>
+                      <span className="process-node" />
+                      <div className="process-body">
+                        <div className="process-head">
+                          <strong>
+                            {step.label || step.type || "过程"} {step.id || ""}
+                          </strong>
+                          {(step.worker || step.time) && (
+                            <small>
+                              {step.worker || ""} {step.time ? `· ${formatTime(step.time)}` : ""}
+                            </small>
+                          )}
+                        </div>
+                        <p>{step.description || "无描述"}</p>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
           </div>
-          <section className="drawer-section">
-            <h4>证明说明</h4>
-            <p className="soft-box">{vuln.description || "未记录"}</p>
-          </section>
-          <section className="drawer-section">
-            <h4>关键证据</h4>
-            <div className="evidence-list">
-              {(vuln.evidence?.length ? vuln.evidence : ["未记录"]).map((item, index) => (
-                <p key={`${item}-${index}`}>{item}</p>
-              ))}
-            </div>
-          </section>
-          <section className="drawer-section">
-            <h4>漏洞证明数据包</h4>
-            <div className="packet-list">
-              {(vuln.proof_packets || []).length === 0 ? (
-                <p className="soft-box">未记录证明数据包。</p>
-              ) : (
-                vuln.proof_packets.map((packet, index) => (
-                  <article className="packet-card" key={`${packet.title}-${index}`}>
-                    <strong>{packet.title || `证明 ${index + 1}`}</strong>
-                    <span>请求数据包</span>
-                    <pre>{packet.request || "未记录"}</pre>
-                    <span>响应/回显</span>
-                    <pre>{packet.response || "未记录"}</pre>
-                    {packet.note && <p>{packet.note}</p>}
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
-          <section className="drawer-section">
-            <h4>漏洞浮现过程</h4>
-            <div className="process-list">
-              {(vuln.process || []).length === 0 ? (
-                <p className="soft-box">未记录漏洞浮现过程。</p>
-              ) : (
-                (vuln.process || []).map((step, index) => (
-                  <article className="process-step" key={`${step.id}-${index}`}>
-                    <span>{index + 1}</span>
-                    <div>
-                      <strong>
-                        {step.label || step.type || "过程"} {step.id || ""}
-                      </strong>
-                      <p>{step.description || "无描述"}</p>
-                      {(step.worker || step.time) && (
-                        <small>
-                          {step.worker || ""} {step.time ? `· ${formatTime(step.time)}` : ""}
-                        </small>
-                      )}
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </section>
         </div>
         <footer className="drawer-footer">
           <button className="ghost-button compact" type="button" onClick={onClose}>
@@ -4546,22 +4765,118 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
   );
 }
 
+// Proof packet card with copy buttons + collapsible long request/response.
+// Pure-client: uses navigator.clipboard, no API. Falls back to a textarea
+// select hack when clipboard API is unavailable (older browsers / non-HTTPS).
+function ProofPacket({ packet, index }) {
+  const request = packet.request || "";
+  const response = packet.response || "";
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(null); // "request" | "response" | null
+
+  const copy = async (label, text) => {
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 1400);
+    } catch {
+      setCopied(null);
+    }
+  };
+
+  const longRequest = request.split("\n").length > 12;
+  const longResponse = response.split("\n").length > 12;
+
+  return (
+    <article className="packet-card">
+      <header className="packet-head">
+        <strong>{packet.title || `证明 ${index + 1}`}</strong>
+      </header>
+      <div className="packet-block">
+        <div className="packet-block-head">
+          <span>请求数据包</span>
+          <button
+            type="button"
+            className="packet-copy"
+            onClick={() => copy("request", request)}
+            disabled={!request}
+            aria-label="复制请求包"
+          >
+            {copied === "request" ? <Check size={13} /> : <Copy size={13} />}
+            {copied === "request" ? "已复制" : "复制"}
+          </button>
+        </div>
+        <pre className={cn(!expanded && longRequest && "collapsed")}>{request || "未记录"}</pre>
+        {longRequest && (
+          <button type="button" className="packet-toggle" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "收起" : `展开全部 (${request.split("\n").length} 行)`}
+          </button>
+        )}
+      </div>
+      <div className="packet-block">
+        <div className="packet-block-head">
+          <span>响应/回显</span>
+          <button
+            type="button"
+            className="packet-copy"
+            onClick={() => copy("response", response)}
+            disabled={!response}
+            aria-label="复制响应包"
+          >
+            {copied === "response" ? <Check size={13} /> : <Copy size={13} />}
+            {copied === "response" ? "已复制" : "复制"}
+          </button>
+        </div>
+        <pre className={cn(!expanded && longResponse && "collapsed")}>{response || "未记录"}</pre>
+        {longResponse && (
+          <button type="button" className="packet-toggle" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "收起" : `展开全部 (${response.split("\n").length} 行)`}
+          </button>
+        )}
+      </div>
+      {packet.note && <p className="packet-note">{packet.note}</p>}
+    </article>
+  );
+}
+
 function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, onRefresh }) {
+  const statusChip = loading
+    ? "loading"
+    : error
+      ? "error"
+      : report?.composer_source === "model"
+        ? "model"
+        : refreshing
+          ? "enhancing"
+          : report
+            ? "template"
+            : "empty";
+  const statusLabel = {
+    loading: "生成中",
+    error: "不可用",
+    model: `模型版 · ${report?.composer_model || "chat5.4"}`,
+    enhancing: "模板已就绪 · 增强中",
+    template: "模板草稿",
+    empty: "等待生成",
+  }[statusChip];
   return (
     <section className="drawer-section report-draft-section">
       <div className="report-draft-head">
-        <div>
+        <div className="report-draft-heading">
           <h4>交付版报告草稿</h4>
-          <p>
-            {report
-              ? report.composer_source === "model"
-                ? `模型整理 · ${report.composer_model || "chat5.4"}`
-                : refreshing
-                  ? "模板已就绪 · chat5.4 增强中"
-                  : "模板草稿"
-              : "基于现有证据生成，不改漏洞状态"}
-          </p>
-          {!!hint && <small className="report-draft-hint">{hint}</small>}
+          <span className={cn("report-draft-chip", statusChip)}>{statusLabel}</span>
         </div>
         <button
           className="ghost-button compact"
@@ -4573,6 +4888,7 @@ function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, 
           模型重生成
         </button>
       </div>
+      {!!hint && hint !== statusLabel && <small className="report-draft-hint">{hint}</small>}
       {loading ? (
         <div className="report-draft-card report-draft-loading">
           <Loader2 className="spin" size={16} />
@@ -4608,6 +4924,31 @@ function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, 
             <h5>漏洞证明</h5>
             <p>{report.vulnerability_proof}</p>
           </div>
+          {!!report.exploit_script && (
+            <div className="report-draft-block">
+              <h5>利用脚本</h5>
+              <div className="exploit-script-card">
+                <div className="exploit-script-head">
+                  <span>可复现 Python3 脚本</span>
+                  <button
+                    type="button"
+                    className="packet-copy"
+                    onClick={() => {
+                      const text = report.exploit_script.replace(/^```python\s*/, "").replace(/```\s*$/, "");
+                      if (navigator.clipboard?.writeText) {
+                        navigator.clipboard.writeText(text);
+                      }
+                    }}
+                    aria-label="复制脚本"
+                  >
+                    <Copy size={13} />
+                    复制
+                  </button>
+                </div>
+                <pre className="exploit-script-pre">{report.exploit_script.replace(/^```python\s*/, "").replace(/```\s*$/, "")}</pre>
+              </div>
+            </div>
+          )}
           {!!report.proof_points?.length && (
             <div className="report-draft-block">
               <h5>证明要点</h5>

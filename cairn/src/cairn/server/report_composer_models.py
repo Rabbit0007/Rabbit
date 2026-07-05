@@ -42,3 +42,6 @@ class VulnerabilityNarrativeReport(BaseModel):
     evidence_highlights: list[str] = Field(default_factory=list)
     remediation: list[str] = Field(default_factory=list)
     operator_notes: list[str] = Field(default_factory=list)
+    # 可复现利用脚本 (LLM 生成, 含脚本代码 + 用法 + 预期输出).
+    # 模板路径不生成脚本, 留空; LLM 路径基于漏洞链生成。
+    exploit_script: str = ""

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 import json
+import os
+import re
 from importlib import resources
 from pathlib import Path
 from typing import Any, Literal
@@ -252,9 +254,46 @@ class DispatchConfig(BaseModel):
     @classmethod
     def load(cls, path: Path) -> "DispatchConfig":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        # Expand ${VAR} placeholders against the dispatcher process's
+        # environment so secrets (API keys, tokens) never have to live in the
+        # YAML file itself. Missing vars are left as the literal placeholder
+        # so a misconfigured secret surfaces clearly at worker exec time.
+        _expand_env_placeholders(data)
         config = cls.model_validate(data)
         validate_prompt_resources(config.runtime.prompt_group)
         return config
+
+
+# Matches ${VAR_NAME} placeholders in env values. Strict: requires braces so
+# ordinary `$` characters in values are not mistaken for placeholders.
+_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+
+
+def _expand_env_placeholders(obj: Any) -> None:
+    """Recursively replace ${VAR} in all string values with os.environ values.
+
+    Walks dicts and lists in place. Missing env vars leave the placeholder
+    intact so a missing secret is visible (the worker CLI will reject an
+    `sk-${...}`-shaped key) rather than silently becoming an empty string.
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(value, str):
+                obj[key] = _ENV_PLACEHOLDER_RE.sub(
+                    lambda m: os.environ.get(m.group(1)) or m.group(0),
+                    value,
+                )
+            else:
+                _expand_env_placeholders(value)
+    elif isinstance(obj, list):
+        for i, value in enumerate(obj):
+            if isinstance(value, str):
+                obj[i] = _ENV_PLACEHOLDER_RE.sub(
+                    lambda m: os.environ.get(m.group(1)) or m.group(0),
+                    value,
+                )
+            else:
+                _expand_env_placeholders(value)
 
 
 def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], key: str) -> None:

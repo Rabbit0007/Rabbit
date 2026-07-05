@@ -3,5 +3,21 @@
 __pycache__/
 .playwright-cli/
 datas/
+
+# Secrets — never commit real API keys / tokens.
+.env
+dispatch.yaml.bak
+*.bak
+
+# Local notes / transcripts that may contain target info.
+未命名.txt
+*.local.txt
+
 cairn/frontend/node_modules/
 cairn/frontend/dist/
+
+# Built frontend assets — only track index.html, not the hashed bundles.
+cairn/src/cairn/server/static/assets/
+
+# Claude Code session artifacts.
+.claude/
