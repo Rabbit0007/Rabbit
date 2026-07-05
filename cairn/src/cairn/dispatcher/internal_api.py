@@ -214,9 +214,56 @@ def _config_with_workers(loop: "DispatcherLoop", workers: list[WorkerConfig]) ->
     return DispatchConfig.model_validate(data)
 
 
+def _remask_secrets(obj: Any) -> None:
+    """Replace real secret values with ${VAR} placeholders before writing YAML.
+
+    At startup the dispatcher expands ${VAR} in dispatch.yaml to real values
+    (from its own environment, populated via docker `env_file: .env`). The
+    in-memory DispatchConfig therefore carries real secrets. When the
+    internal API writes the config back to dispatch.yaml (e.g. after a worker
+    edit from the UI), we must walk every env value and, if it matches a
+    known secret env var of this process, substitute it back to ${VAR_NAME}
+    so secrets never persist on disk in the YAML file.
+    """
+    # Build value -> "${VAR}" map from this process's environment, but only
+    # for entries that look like secrets (long, non-empty).
+    reverse_map: dict[str, str] = {}
+    for name, value in os.environ.items():
+        if not value or len(value) < 12:
+            continue
+        # Only treat as secret if the var name looks like a key/token secret.
+        upper = name.upper()
+        if not any(tag in upper for tag in ("KEY", "TOKEN", "SECRET", "PASSWORD")):
+            continue
+        reverse_map.setdefault(value, "${" + name + "}")
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in list(node.items()):
+                if isinstance(value, str) and value in reverse_map:
+                    node[key] = reverse_map[value]
+                elif isinstance(value, (dict, list)):
+                    _walk(value)
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                if isinstance(value, str) and value in reverse_map:
+                    node[i] = reverse_map[value]
+                elif isinstance(value, (dict, list)):
+                    _walk(value)
+
+    if reverse_map:
+        _walk(obj)
+
+
 def _write_dispatch_config(loop: "DispatcherLoop", config: DispatchConfig) -> None:
     path = loop.config_path
     data = config.model_dump(mode="json")
+    # Re-mask secrets: the in-memory config has ${VAR} placeholders expanded
+    # to real values (loaded at startup). When writing back to the YAML file
+    # we must substitute real values back to their ${VAR} placeholders so
+    # secrets never land in dispatch.yaml on disk. We map every secret env
+    # var of the dispatcher process back to its placeholder name.
+    _remask_secrets(data)
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
     tmp_path = path.with_name(f".{path.name}.tmp")
     tmp_path.write_text(text, encoding="utf-8")

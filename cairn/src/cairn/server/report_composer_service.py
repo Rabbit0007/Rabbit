@@ -34,7 +34,7 @@ from cairn.server.report_composer_models import (
 )
 from cairn.server.vulnerabilities_models import Vulnerability
 
-_REPORT_TIMEOUT_SECONDS = 120
+_REPORT_TIMEOUT_SECONDS = 300
 _TRAILING_PUNCTUATION = "`'\"*()[]{}<>，。；;：:,."
 _CONFIG_PATH_ENV = "CAIRN_REPORT_COMPOSER_CONFIG_PATH"
 
@@ -276,7 +276,10 @@ def _compose_with_model(
         "\n\n上下文：\n"
         + json.dumps(prompt_payload, ensure_ascii=False, separators=(",", ":"))
     )
-    for _attempt in range(2):
+    # Single attempt: glm-5.x reasoning is slow (~200s for full reports),
+    # and a second attempt would double the wait. On failure, fall back to
+    # the template (which is itself a usable reproducible report).
+    for _attempt in range(1):
         content = _request_model_json(system=system, user=user, profile=profile)
         if content is None:
             continue
@@ -403,14 +406,14 @@ def _model_prompt_payload(
             "vulnerability_type": fallback.vulnerability_type,
         },
         "grounding": {
-            "description": _trim(vulnerability.description, 360),
+            "description": _trim(vulnerability.description, 400),
             "source_intent_id": vulnerability.source_intent_id,
             "source_intent_description": _trim(
                 vulnerability.source_intent_description or "",
                 140,
             ),
             "source_worker": vulnerability.source_worker,
-            "evidence_highlights": _evidence_highlights(vulnerability, context)[:4],
+            "evidence_highlights": _evidence_highlights(vulnerability, context)[:3],
             "process_highlights": [
                 {
                     "label": str(step.get("label") or step.get("type") or step.get("id") or "过程"),
@@ -438,21 +441,6 @@ def _model_prompt_payload(
                 for fact_id, description in context.related_facts[:3]
             ],
             "source_intent_description": _trim(context.source_intent_description or "", 140),
-        },
-        "template_report": {
-            "vulnerability_type": fallback.vulnerability_type,
-            "executive_summary": _trim(fallback.executive_summary, 160),
-            "attack_surface": fallback.attack_surface[:4],
-            "proof_points": [
-                {"label": point.label, "content": _trim(point.content, 120)}
-                for point in fallback.proof_points[:6]
-            ],
-            "vulnerability_proof": _trim(fallback.vulnerability_proof, 220),
-            "impact": _trim(fallback.impact, 160),
-            "root_cause": _trim(fallback.root_cause, 160),
-            "evidence_highlights": fallback.evidence_highlights[:4],
-            "remediation": fallback.remediation[:3],
-            "operator_notes": fallback.operator_notes[:2],
         },
     }
 
