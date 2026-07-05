@@ -17,6 +17,10 @@ services:
       - ./datas/cairn/:/root/.local/share/cairn/
       - ./dispatch.yaml:/cairn/dispatch.yaml:ro
       - ./.rabbit:/cairn/.rabbit
+    # Same .env as dispatcher: report composer reads PI_API_KEY_* from here
+    # to expand ${VAR} placeholders in dispatch.yaml at report time.
+    env_file:
+      - .env
     environment:
       CAIRN_DISPATCHER_INTERNAL_URL: "http://rabbit-pentest-dispatcher:8989"
       CAIRN_REPORT_COMPOSER_CONFIG_PATH: "/cairn/dispatch.yaml"

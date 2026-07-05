@@ -4544,7 +4544,7 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
 
   const regenerateReportDraft = useCallback(async () => {
     setReportRefreshing(true);
-    setReportHint("正在使用 chat5.4 重生成交付版草稿…");
+    setReportHint("正在用模型重生成报告…");
     try {
       const payload = await apiRequest(
         `/api/vulnerabilities/${encodeURIComponent(vuln.id)}/report?use_model=1`,
@@ -4552,15 +4552,15 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
       if (payload?.composer_source === "model") {
         setReportDraft(payload);
         setReportError("");
-        setReportHint(`已切换到 ${payload.composer_model || "chat5.4"} 模型版`);
+        setReportHint(`已切换到 ${payload.composer_model || "模型"} 版`);
       } else {
-        setReportHint("chat5.4 暂未返回，当前保留模板版草稿。");
+        setReportHint("模型暂未返回，当前保留模板版草稿。");
       }
     } catch (error) {
       if (!reportDraft) {
         setReportError(error.message || "报告草稿生成失败");
       }
-      setReportHint("chat5.4 暂时不可用，当前保留模板版草稿。");
+      setReportHint("模型暂时不可用，当前保留模板版草稿。");
     } finally {
       setReportRefreshing(false);
     }
@@ -4583,38 +4583,21 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
 
     const load = async () => {
       try {
+        // Only fetch the template version on open — fast (~1s) and gives
+        // the user something to read immediately. The LLM-enhanced version
+        // (use_model=1) is slow (~80s on glm-5.2) and is triggered on demand
+        // by the "模型重生成" button, not auto-fired on every drawer open.
         const payload = await apiRequest(`/api/vulnerabilities/${encodeURIComponent(vuln.id)}/report`);
         if (cancelled) return;
         setReportDraft(payload);
-        setReportHint("模板草稿已就绪，正在请求 chat5.4 增强版…");
+        setReportHint(payload?.composer_source === "model" ? `已切换到 ${payload.composer_model || "模型"} 版` : "模板草稿已就绪，点「模型重生成」可生成可复现脚本。");
       } catch (error) {
         if (cancelled) return;
         setReportDraft(null);
         setReportError(error.message || "报告草稿生成失败");
-        setReportLoading(false);
-        return;
-      }
-
-      if (cancelled) return;
-      setReportLoading(false);
-      setReportRefreshing(true);
-      try {
-        const payload = await apiRequest(
-          `/api/vulnerabilities/${encodeURIComponent(vuln.id)}/report?use_model=1`,
-        );
-        if (cancelled) return;
-        if (payload?.composer_source === "model") {
-          setReportDraft(payload);
-          setReportHint(`已切换到 ${payload.composer_model || "chat5.4"} 模型版`);
-        } else {
-          setReportHint("chat5.4 暂未返回，当前展示模板版草稿。");
-        }
-      } catch {
-        if (cancelled) return;
-        setReportHint("chat5.4 暂时不可用，当前展示模板版草稿。");
       } finally {
         if (!cancelled) {
-          setReportRefreshing(false);
+          setReportLoading(false);
         }
       }
     };
@@ -4866,7 +4849,7 @@ function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, 
   const statusLabel = {
     loading: "生成中",
     error: "不可用",
-    model: `模型版 · ${report?.composer_model || "chat5.4"}`,
+    model: `模型版 · ${report?.composer_model || "glm-5.2"}`,
     enhancing: "模板已就绪 · 增强中",
     template: "模板草稿",
     empty: "等待生成",

@@ -479,7 +479,11 @@ def _resolve_report_composer_profile() -> _ComposerProfile | None:
                 continue
             model = str(env.get("PI_MODEL") or "").strip()
             base_url = str(env.get("PI_BASE_URL") or "").strip()
-            api_key = str(env.get("PI_API_KEY") or "").strip()
+            # dispatch.yaml stores the key as ${PI_API_KEY_GLM}; expand it
+            # against the server process env (populated via docker env_file:
+            # .env). Without this the LLM call goes out with a literal
+            # "${PI_API_KEY_GLM}" key and 401s back to template.
+            api_key = os.path.expandvars(str(env.get("PI_API_KEY") or "")).strip()
             provider_api = str(env.get("PI_PROVIDER_API") or "openai-completions").strip()
             if not model or not base_url or not api_key:
                 continue
