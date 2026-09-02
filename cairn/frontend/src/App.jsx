@@ -1407,7 +1407,7 @@ function ProjectsPage({ runAction, setToast, confirmAction }) {
     return projects.filter((project) => {
       if (statusFilter !== "all" && project.status !== statusFilter) return false;
       if (keyword) {
-        const blob = [project.title, project.id, project.reason?.worker, project.reason?.trigger]
+        const blob = [project.title, project.id, project.decide?.worker, project.decide?.trigger]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -1792,11 +1792,11 @@ function ProjectCard({ project, campaign, campaignLoading, onDelete, onStop, onS
         </div>
       </div>
       <ProjectCampaignPreview campaign={campaign} loading={campaignLoading} />
-      {project.reason && (
-        <div className="reason-strip project-reason-strip">
+      {project.decide && (
+        <div className="decide-strip project-decide-strip">
           <Activity size={16} />
-          <span>{project.reason.worker}</span>
-          <span>{project.reason.trigger}</span>
+          <span>{project.decide.worker}</span>
+          <span>{project.decide.trigger}</span>
         </div>
       )}
       <div className="card-actions project-action-row">
@@ -1876,7 +1876,7 @@ function ProjectCampaignPreview({ campaign, loading }) {
         {campaign.lead}
       </p>
       <div className="project-briefing-meta">
-        <span>开放意图 {campaign.counts.open_intents}</span>
+        <span>开放步骤 {campaign.counts.open_steps}</span>
         <span>阻塞 {campaign.blockers.length}</span>
         <span>下一步 {campaign.next_steps.length}</span>
       </div>
@@ -2006,9 +2006,9 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
 
   const project = detail?.project;
   const facts = detail?.facts || [];
-  const intents = detail?.intents || [];
+  const steps = detail?.steps || [];
   const selectedFactIds = selected?.type === "fact" ? [selected.id] : facts.length ? ["origin"] : [];
-  const selectedIntent = selected?.type === "intent" ? intents.find((intent) => intent.id === selected.id) : null;
+  const selectedStep = selected?.type === "step" ? steps.find((intent) => step.id === selected.id) : null;
 
   const updateTitle = () => {
     setModal("title");
@@ -2085,7 +2085,7 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
         <div className="workspace-actions">
           <div className="status-pill">
             <span>{facts.length} 个事实</span>
-            <span>{intents.length} 个意图</span>
+            <span>{steps.length} 个步骤</span>
           </div>
           <button className="ghost-button compact" type="button" onClick={() => exportProject("yaml")}>
             <Download size={16} />
@@ -2142,7 +2142,7 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
               className="primary-outline compact success"
               type="button"
               onClick={() => setModal("conclude")}
-              disabled={!selectedIntent || selectedIntent.to}
+              disabled={!selectedIntent || selectedStep.to}
             >
               <CheckCircle2 size={16} />
               完成
@@ -2178,7 +2178,7 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
           onClose={() => setModal(null)}
           onSubmit={async (payload) => {
             await runAction("意图已创建", () =>
-              apiRequest(`/projects/${project.id}/intents`, { method: "POST", body: payload }),
+              apiRequest(`/projects/${project.id}/steps`, { method: "POST", body: payload }),
             );
             setModal(null);
             await load();
@@ -2187,14 +2187,14 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
       )}
       {modal === "conclude" && selectedIntent && (
         <TextActionModal
-          title={`完成意图 ${selectedIntent.id}`}
+          title={`完成意图 ${selectedStep.id}`}
           label="产出事实"
           onClose={() => setModal(null)}
           onSubmit={async (description) => {
             await runAction("意图已完成", () =>
-              apiRequest(`/projects/${project.id}/intents/${selectedIntent.id}/conclude`, {
+              apiRequest(`/projects/${project.id}/steps/${selectedStep.id}/conclude`, {
                 method: "POST",
-                body: { worker: selectedIntent.worker || HUMAN_WORKER, description },
+                body: { worker: selectedStep.worker || HUMAN_WORKER, description },
               }),
             );
             setModal(null);
@@ -2270,16 +2270,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   const cyRef = useRef(null);
 
   const elements = useMemo(() => {
-    const isBootstrapIntent = (intent) =>
-      Boolean(
-        intent &&
-          intent.description === "bootstrap" &&
-          intent.creator === "dispatcher.bootstrap" &&
-          Array.isArray(intent.from) &&
-          intent.from.length === 1 &&
-          intent.from[0] === "origin" &&
-          intent.to === null,
-      );
+    const isBootstrapIntent = () => false; // bootstrap removed in Decide/Execute model
 
     const estimateLabelCharWidth = (char, fontSize) => {
       if (/\s/.test(char)) return fontSize * 0.35;
@@ -2347,14 +2338,14 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     };
 
     const openIntentNodeType = (intent) => {
-      if (isBootstrapIntent(intent)) return intent.worker ? "bootstrap_running" : "bootstrap_pending";
-      return intent.worker ? "in_progress" : "unclaimed";
+      if (false) return step.worker ? "step_running" : "step_pending";
+      return step.worker ? "in_progress" : "unclaimed";
     };
 
-    const openIntentNodeLabel = (intent) => (isBootstrapIntent(intent) ? "Bootstrap" : "?");
+    const openIntentNodeLabel = (intent) => (false ? "Bootstrap" : "?");
 
     const openIntentNodeSize = (intent) => {
-      if (isBootstrapIntent(intent)) return { width: 82, height: 30 };
+      if (false) return { width: 82, height: 30 };
       return { width: 22, height: 22 };
     };
 
@@ -2375,16 +2366,16 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     });
 
     const edges = [];
-    detail.intents.forEach((intent) => {
-      const label = intent.description || "";
-      (intent.from || []).forEach((source) => {
-        if (intent.to) {
+    detail.steps.forEach((intent) => {
+      const label = step.description || "";
+      (step.from || []).forEach((source) => {
+        if (step.to) {
           edges.push({
             data: {
-              id: `${intent.id}_${source}`,
+              id: `${step.id}_${source}`,
               source,
-              target: intent.to,
-              intentId: intent.id,
+              target: step.to,
+              stepId: step.id,
               label,
               status: "concluded",
             },
@@ -2392,7 +2383,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           return;
         }
 
-        const phId = `_ph_${intent.id}`;
+        const phId = `_ph_${step.id}`;
         if (!nodes.some((node) => node.data.id === phId)) {
           const nodeType = openIntentNodeType(intent);
           const nodeSize = openIntentNodeSize(intent);
@@ -2400,9 +2391,9 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
             data: {
               id: phId,
               label: openIntentNodeLabel(intent),
-              description: intent.description,
+              description: step.description,
               nodeType,
-              intentId: intent.id,
+              stepId: step.id,
               width: nodeSize.width,
               height: nodeSize.height,
             },
@@ -2411,10 +2402,10 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
 
         edges.push({
           data: {
-            id: `${intent.id}_${source}`,
+            id: `${step.id}_${source}`,
             source,
             target: phId,
-            intentId: intent.id,
+            stepId: step.id,
             label,
             status: openIntentNodeType(intent),
           },
@@ -2422,16 +2413,16 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       }
       );
 
-      if (!intent.to && isBootstrapIntent(intent)) {
+      if (!step.to && false) {
         edges.push({
           data: {
-            id: `${intent.id}_goal`,
-            source: `_ph_${intent.id}`,
+            id: `${step.id}_goal`,
+            source: `_ph_${step.id}`,
             target: "goal",
-            intentId: intent.id,
+            stepId: step.id,
             label: "",
             status: openIntentNodeType(intent),
-            edgeType: "bootstrap_scope",
+            edgeType: "step_scope",
           },
         });
       }
@@ -2545,19 +2536,19 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
 
   const initialPositionForNode = useCallback(
     (nodeData, previousPositions) => {
-      if (nodeData.intentId) {
+      if (nodeData.stepId) {
         const previousPlaceholder = previousPositions.get(nodeData.id);
         if (previousPlaceholder) return previousPlaceholder;
-        const intent = detail.intents.find((item) => item.id === nodeData.intentId);
-        return intent ? anchorPositionFromIds(intent.from, previousPositions, 32) : null;
+        const intent = detail.steps.find((item) => item.id === nodeData.stepId);
+        return intent ? anchorPositionFromIds(step.from, previousPositions, 32) : null;
       }
-      const producingIntent = detail.intents.find((item) => item.to === nodeData.id);
+      const producingIntent = detail.steps.find((item) => item.to === nodeData.id);
       if (!producingIntent) return null;
       const placeholderPosition = previousPositions.get(`_ph_${producingIntent.id}`);
       if (placeholderPosition) return placeholderPosition;
       return anchorPositionFromIds(producingIntent.from, previousPositions, 44);
     },
-    [anchorPositionFromIds, detail.intents],
+    [anchorPositionFromIds, detail.steps],
   );
 
   const fadeInFreshElement = useCallback((element) => {
@@ -2743,7 +2734,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           },
         },
         {
-          selector: 'node[nodeType="bootstrap_pending"]',
+          selector: 'node[nodeType="step_pending"]',
           style: {
             "background-color": "#1c212b",
             "background-opacity": 0.96,
@@ -2765,7 +2756,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           },
         },
         {
-          selector: 'node[nodeType="bootstrap_running"]',
+          selector: 'node[nodeType="step_running"]',
           style: {
             "background-color": "#fb923c",
             "background-opacity": 0.96,
@@ -2857,7 +2848,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           },
         },
         {
-          selector: 'edge[status="bootstrap_pending"]',
+          selector: 'edge[status="step_pending"]',
           style: {
             width: 2,
             "line-color": "#fdba74",
@@ -2882,7 +2873,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           },
         },
         {
-          selector: 'edge[status="bootstrap_running"]',
+          selector: 'edge[status="step_running"]',
           style: {
             width: 2.5,
             "line-color": "#fb923c",
@@ -2907,7 +2898,7 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           },
         },
         {
-          selector: 'edge[edgeType="bootstrap_scope"]',
+          selector: 'edge[edgeType="step_scope"]',
           style: {
             label: "",
             width: 1.8,
@@ -2955,16 +2946,16 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     cyRef.current = cy;
     cy.on("tap", "node", (event) => {
       const node = event.target;
-      const intentId = node.data("intentId");
-      if (intentId) {
-        onSelect({ type: "intent", id: intentId });
+      const stepId = node.data("stepId");
+      if (stepId) {
+        onSelect({ type: "intent", id: stepId });
         return;
       }
       onSelect({ type: "fact", id: node.id() });
     });
     cy.on("tap", "edge", (event) => {
-      const intentId = event.target.data("intentId");
-      if (intentId) onSelect({ type: "intent", id: intentId });
+      const stepId = event.target.data("stepId");
+      if (stepId) onSelect({ type: "intent", id: stepId });
     });
     cy.on("tap", (event) => {
       if (event.target === cy) onSelect(null);
@@ -3003,27 +2994,18 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    const isBootstrapIntent = (intent) =>
-      Boolean(
-        intent &&
-          intent.description === "bootstrap" &&
-          intent.creator === "dispatcher.bootstrap" &&
-          Array.isArray(intent.from) &&
-          intent.from.length === 1 &&
-          intent.from[0] === "origin" &&
-          intent.to === null,
-      );
+    const isBootstrapIntent = () => false; // bootstrap removed in Decide/Execute model
 
     const collectIntentElements = (intent, nodeIds, edgeIds) => {
-      if (intent.to) nodeIds.add(intent.to);
-      else nodeIds.add(`_ph_${intent.id}`);
-      for (const sourceId of intent.from || []) {
+      if (step.to) nodeIds.add(step.to);
+      else nodeIds.add(`_ph_${step.id}`);
+      for (const sourceId of step.from || []) {
         nodeIds.add(sourceId);
-        edgeIds.add(`${intent.id}_${sourceId}`);
+        edgeIds.add(`${step.id}_${sourceId}`);
       }
-      if (isBootstrapIntent(intent)) {
+      if (false) {
         nodeIds.add("goal");
-        edgeIds.add(`${intent.id}_goal`);
+        edgeIds.add(`${step.id}_goal`);
       }
     };
 
@@ -3034,17 +3016,17 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       const walkFactUpstream = (id) => {
         if (upstreamFacts.has(id)) return;
         upstreamFacts.add(id);
-        detail.intents.forEach((intent) => {
-          if (intent.to === id) walkIntentUpstream(intent.id);
+        detail.steps.forEach((intent) => {
+          if (step.to === id) walkIntentUpstream(step.id);
         });
       };
 
-      const walkIntentUpstream = (intentId) => {
-        if (upstreamIntents.has(intentId)) return;
-        upstreamIntents.add(intentId);
-        const intent = detail.intents.find((item) => item.id === intentId);
+      const walkIntentUpstream = (stepId) => {
+        if (upstreamIntents.has(stepId)) return;
+        upstreamIntents.add(stepId);
+        const intent = detail.steps.find((item) => item.id === stepId);
         if (!intent) return;
-        (intent.from || []).forEach((sourceId) => walkFactUpstream(sourceId));
+        (step.from || []).forEach((sourceId) => walkFactUpstream(sourceId));
       };
 
       walkFactUpstream(factId);
@@ -3055,8 +3037,8 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
 
     if (!selected?.id) return;
 
-    if (selected.type === "intent") {
-      const intent = detail.intents.find((item) => item.id === selected.id);
+    if (selected.type === "step") {
+      const intent = detail.steps.find((item) => item.id === selected.id);
       if (!intent) return;
       const nodeIds = new Set();
       const edgeIds = new Set();
@@ -3074,8 +3056,8 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       const { upstreamFacts, upstreamIntents } = collectFactLineage(selected.id);
       const nodeIds = new Set(upstreamFacts);
       const edgeIds = new Set();
-      upstreamIntents.forEach((intentId) => {
-        const intent = detail.intents.find((item) => item.id === intentId);
+      upstreamIntents.forEach((stepId) => {
+        const intent = detail.steps.find((item) => item.id === stepId);
         if (intent) collectIntentElements(intent, nodeIds, edgeIds);
       });
 
@@ -3118,20 +3100,20 @@ function InspectorListItem({ title, description, meta, onClick }) {
 
 function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timeline, onRefresh, runAction }) {
   const facts = detail.facts;
-  const intents = detail.intents;
+  const steps = detail.steps;
   const fact = selected?.type === "fact" ? facts.find((item) => item.id === selected.id) : null;
-  const intent = selected?.type === "intent" ? intents.find((item) => item.id === selected.id) : null;
+  const intent = selected?.type === "step" ? steps.find((item) => item.id === selected.id) : null;
   const tabs = [
     ["details", "详情", null],
     ["hints", "提示", detail.hints.length],
-    ["logs", "日志", intents.length],
+    ["logs", "日志", steps.length],
     ["timeline", "时间线", timeline.length],
   ];
 
   const claimIntent = async () => {
     if (!intent) return;
     await runAction("意图已认领", () =>
-      apiRequest(`/projects/${detail.project.id}/intents/${intent.id}/heartbeat`, {
+      apiRequest(`/projects/${detail.project.id}/steps/${step.id}/heartbeat`, {
         method: "POST",
         body: { worker: HUMAN_WORKER },
       }),
@@ -3142,9 +3124,9 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
   const releaseIntent = async () => {
     if (!intent) return;
     await runAction("意图已释放", () =>
-      apiRequest(`/projects/${detail.project.id}/intents/${intent.id}/release`, {
+      apiRequest(`/projects/${detail.project.id}/steps/${step.id}/release`, {
         method: "POST",
-        body: { worker: intent.worker || HUMAN_WORKER },
+        body: { worker: step.worker || HUMAN_WORKER },
       }),
     );
     onRefresh();
@@ -3171,7 +3153,7 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
                   <p>{detail.project.id}</p>
                   <div className="detail-grid">
                     <MiniStat label="事实" value={facts.length} />
-                    <MiniStat label="意图" value={intents.length} />
+                    <MiniStat label="意图" value={steps.length} />
                   </div>
                 </div>
                 <ProjectCampaignPanel campaign={campaign} />
@@ -3187,17 +3169,17 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
             {intent && (
               <div className="detail-card">
                 <span>意图</span>
-                <h3>{intent.id}</h3>
-                <p>{intent.description}</p>
+                <h3>{step.id}</h3>
+                <p>{step.description}</p>
                 <div className="detail-meta">
-                  <span>来源：{(intent.from || []).join(", ")}</span>
-                  <span>产出：{intent.to || "未完成"}</span>
-                  <span>创建者：{intent.creator}</span>
-                  <span>Worker：{intent.worker || "未认领"}</span>
+                  <span>来源：{(step.from || []).join(", ")}</span>
+                  <span>产出：{step.to || "未完成"}</span>
+                  <span>创建者：{step.creator}</span>
+                  <span>Worker：{step.worker || "未认领"}</span>
                 </div>
-                {!intent.to && (
+                {!step.to && (
                   <div className="button-row">
-                    {!intent.worker ? (
+                    {!step.worker ? (
                       <button className="primary-outline compact" type="button" onClick={claimIntent}>
                         <Activity size={16} />
                         认领
@@ -3302,7 +3284,7 @@ function ProjectCampaignPanel({ campaign }) {
       <p className="project-campaign-summary">{campaign.summary}</p>
       <div className="detail-grid project-campaign-stats">
         <MiniStat label="高价值漏洞" value={campaign.counts.high_value_vulnerabilities} />
-        <MiniStat label="开放意图" value={campaign.counts.open_intents} />
+        <MiniStat label="开放步骤" value={campaign.counts.open_steps} />
         <MiniStat label="阻塞项" value={campaign.blockers.length} />
         <MiniStat label="下一步" value={campaign.next_steps.length} />
       </div>
@@ -3325,9 +3307,9 @@ function ProjectCampaignPanel({ campaign }) {
           ))}
         </CampaignListBlock>
       )}
-      {!!campaign.open_intents?.length && (
+      {!!campaign.open_steps?.length && (
         <CampaignListBlock title="待推进意图">
-          {campaign.open_intents.map((item, index) => (
+          {campaign.open_steps.map((item, index) => (
             <article key={`open-intent-${index}`} className="project-campaign-item">
               <strong>{item}</strong>
             </article>
@@ -3544,6 +3526,9 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
 
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [reportTemplates, setReportTemplates] = useState([]);
+  const [templateUploading, setTemplateUploading] = useState(false);
+  const reportTemplateInputRef = useRef(null);
   const [filters, setFilters] = useState(() => {
     const fallback = { severity: "", project_id: "", status: "", search: route?.search || "", date_from: "", date_to: "" };
     if (typeof window === "undefined") return fallback;
@@ -3580,12 +3565,14 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [list, projectList] = await Promise.all([
+      const [list, projectList, templateList] = await Promise.all([
         apiRequest(`/api/vulnerabilities${query}`),
         apiRequest("/projects"),
+        apiRequest("/api/report-templates").catch(() => []),
       ]);
       setVulnerabilities(list);
       setProjects(projectList);
+      setReportTemplates(templateList);
     } catch (error) {
       if (!silent) setToast({ type: "danger", message: error.message || "漏洞报告加载失败" });
     } finally {
@@ -3625,6 +3612,54 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
     const params = new URLSearchParams({ format: "md" });
     params.set("vulnerability_ids", selected.join(","));
     await runAction("MD 报告已生成", () => downloadFromApi(`/api/vulnerabilities/export?${params}`, `${title}.md`));
+  };
+
+  const uploadReportTemplate = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".docx")) {
+      setToast({ type: "warning", message: "请选择 DOCX 报告模板" });
+      return;
+    }
+    setTemplateUploading(true);
+    try {
+      const content = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+        reader.onerror = () => reject(new Error("模板读取失败"));
+        reader.readAsDataURL(file);
+      });
+      await apiRequest("/api/report-templates", {
+        method: "POST",
+        body: { name: file.name.replace(/\.docx$/i, ""), filename: file.name, content_base64: content },
+      });
+      setToast({ type: "success", message: "报告 Agent 已识别并启用该模板" });
+      await load({ silent: true });
+    } catch (error) {
+      setToast({ type: "danger", message: error.message || "报告模板导入失败" });
+    } finally {
+      setTemplateUploading(false);
+    }
+  };
+
+  const exportTemplateReport = async () => {
+    const active = reportTemplates.find((item) => item.is_active);
+    if (!active) {
+      setToast({ type: "warning", message: "请先导入并启用 DOCX 报告模板" });
+      return;
+    }
+    if (!filters.project_id) {
+      setToast({ type: "warning", message: "请先选择一个项目再生成客户报告" });
+      return;
+    }
+    const project = projects.find((item) => item.id === filters.project_id);
+    await runAction("客户报告已生成", () =>
+      downloadFromApi(
+        `/api/report-templates/${encodeURIComponent(active.id)}/export?project_id=${encodeURIComponent(filters.project_id)}`,
+        `${project?.title || "渗透测试"}-渗透测试报告.docx`,
+      ),
+    );
   };
 
   const updateVulnerabilityStatus = async (vuln, status) => {
@@ -3778,19 +3813,26 @@ function VulnerabilitiesPage({ route, runAction, setToast, confirmAction }) {
         compact
         title={`漏洞报告 / ${viewTitle}`}
         subtitle="查看和管理所有漏洞报告，跟踪漏洞处理进度和状态"
-        actions={
-          <button
-            className="primary-outline compact report-export-button"
-            type="button"
-            disabled={!selectedIds.length}
-            onClick={() => exportMd({ selected: selectedIds, title: "rabbit-vulnerabilities" })}
-          >
-            <Download size={18} />
-            导出报告
+        actions={<div className="button-row">
+          <input ref={reportTemplateInputRef} type="file" accept=".docx" hidden onChange={uploadReportTemplate} />
+          <button className="primary-outline compact" type="button" disabled={templateUploading} onClick={() => reportTemplateInputRef.current?.click()}>
+            {templateUploading ? <Loader2 className="spin" size={17} /> : <FileText size={17} />}
+            导入报告模板
           </button>
-        }
+          <button className="primary-button compact report-export-button" type="button" onClick={exportTemplateReport}>
+            <Download size={18} />
+            生成客户报告
+          </button>
+        </div>}
       />
       <section className="content-wrap vulnerability-report-page">
+        <div className="notice-banner info">
+          <FileText size={18} />
+          <div>
+            <strong>{reportTemplates.find((item) => item.is_active)?.name || "尚未导入报告模板"}</strong>
+            <span>报告 Agent 根据项目当前已确认漏洞实时整理；项目暂停不会影响现有漏洞查看和导出。</span>
+          </div>
+        </div>
         <div className="report-summary-grid">
           <VulnerabilitySummaryCard icon={ShieldAlert} label="严重漏洞" value={visibleSummary.critical || 0} tone="critical" />
           <VulnerabilitySummaryCard icon={AlertTriangle} label="高危漏洞" value={visibleSummary.high || 0} tone="high" />
@@ -4529,6 +4571,42 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
   const [reportRefreshing, setReportRefreshing] = useState(false);
   const [reportError, setReportError] = useState("");
   const [reportHint, setReportHint] = useState("");
+  const [screenshotEvidence, setScreenshotEvidence] = useState([]);
+  const [screenshotUploading, setScreenshotUploading] = useState(false);
+  const screenshotInputRef = useRef(null);
+
+  const loadScreenshotEvidence = useCallback(async () => {
+    try {
+      setScreenshotEvidence(await apiRequest(`/api/vulnerabilities/${encodeURIComponent(vuln.id)}/evidence`));
+    } catch {
+      setScreenshotEvidence([]);
+    }
+  }, [vuln.id]);
+
+  const uploadScreenshotEvidence = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setScreenshotUploading(true);
+    try {
+      const content = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+        reader.onerror = () => reject(new Error("截图读取失败"));
+        reader.readAsDataURL(file);
+      });
+      await apiRequest(`/api/vulnerabilities/${encodeURIComponent(vuln.id)}/evidence/screenshot`, {
+        method: "POST",
+        body: { filename: file.name, mime_type: file.type, content_base64: content },
+      });
+      setReportHint("证明截图已保存，生成客户报告时会自动插入。");
+      await loadScreenshotEvidence();
+    } catch (error) {
+      setReportHint(error.message || "证明截图上传失败");
+    } finally {
+      setScreenshotUploading(false);
+    }
+  };
 
   // Anchor nav: scroll a section into view inside the drawer content pane.
   // Uses button onClick (not <a href="#id">) so we don't mutate the URL hash,
@@ -4608,6 +4686,10 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
     };
   }, [vuln.id]);
 
+  useEffect(() => {
+    loadScreenshotEvidence();
+  }, [loadScreenshotEvidence]);
+
   return (
     <div className="drawer-backdrop" role="presentation" onClick={onClose}>
       <aside
@@ -4658,7 +4740,7 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
               <div className="drawer-info-grid">
                 <InfoBox label="所属项目" value={`${vuln.project_name} (${vuln.project_id})`} />
                 <InfoBox label="确认事实" value={vuln.fact_id} />
-                <InfoBox label="来源意图" value={vuln.source_intent_id || "-"} />
+                <InfoBox label="来源意图" value={vuln.source_step_id || "-"} />
                 <InfoBox label="工作节点" value={vuln.source_worker || "-"} />
               </div>
             </section>
@@ -4667,12 +4749,20 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
               <p className="soft-box">{vuln.description || "未记录"}</p>
             </section>
             <section id="vuln-evidence" className="drawer-section">
-              <h4>关键证据</h4>
+              <div className="section-title-row">
+                <h4>关键证据</h4>
+                <input ref={screenshotInputRef} type="file" accept="image/png,image/jpeg" hidden onChange={uploadScreenshotEvidence} />
+                <button className="primary-outline compact" type="button" disabled={screenshotUploading} onClick={() => screenshotInputRef.current?.click()}>
+                  {screenshotUploading ? <Loader2 className="spin" size={14} /> : <Eye size={14} />}
+                  添加证明截图
+                </button>
+              </div>
               <div className="evidence-list">
                 {(vuln.evidence?.length ? vuln.evidence : ["未记录"]).map((item, index) => (
                   <p key={`${item}-${index}`}>{item}</p>
                 ))}
               </div>
+              {!!screenshotEvidence.length && <p className="muted-copy">已保存 {screenshotEvidence.length} 张证明截图，生成客户报告时自动插入。</p>}
             </section>
             <section id="vuln-packets" className="drawer-section">
               <h4>漏洞证明数据包</h4>
@@ -4907,7 +4997,7 @@ function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, 
             <h5>漏洞证明</h5>
             <p>{report.vulnerability_proof}</p>
           </div>
-          {!!report.exploit_script && (
+          {!!report.exploit_script ? (
             <div className="report-draft-block">
               <h5>利用脚本</h5>
               <div className="exploit-script-card">
@@ -4930,6 +5020,11 @@ function VulnerabilityNarrativeCard({ report, loading, refreshing, error, hint, 
                 </div>
                 <pre className="exploit-script-pre">{report.exploit_script.replace(/^```python\s*/, "").replace(/```\s*$/, "")}</pre>
               </div>
+            </div>
+          ) : (
+            <div className="report-draft-block muted">
+              <h5>利用脚本</h5>
+              <p className="soft-box">此类型漏洞靠上方「漏洞证明」步骤即可复现，无需独立脚本。若需要脚本，点「模型重生成」让模型生成。</p>
             </div>
           )}
           {!!report.proof_points?.length && (
@@ -6234,8 +6329,8 @@ function SettingsModal({ onClose, runAction }) {
 
   const settingsFallback = useMemo(
     () => ({
-      intent_timeout: 15,
-      reason_timeout: 15,
+      step_timeout: 15,
+      decide_timeout: 15,
       worker_unhealthy_retry_after_seconds: 5,
       worker_rejected_retry_after_seconds: 5,
       max_failed_login_attempts: 5,
@@ -6317,14 +6412,14 @@ function SettingsModal({ onClose, runAction }) {
             </div>
             <div className="two-col">
               <label>
-                <span>意图超时（秒）</span>
-                <input type="number" min="5" value={settings.intent_timeout} onChange={(event) => setNumber("intent_timeout", event.target.value)} />
-                <small className="field-hint">意图在被回收前允许等待的最长时间。</small>
+                <span>Step 超时（秒）</span>
+                <input type="number" min="5" value={settings.step_timeout} onChange={(event) => setNumber("step_timeout", event.target.value)} />
+                <small className="field-hint">Step 在被回收前允许等待的最长时间。</small>
               </label>
               <label>
-                <span>Reason 超时（秒）</span>
-                <input type="number" min="5" value={settings.reason_timeout} onChange={(event) => setNumber("reason_timeout", event.target.value)} />
-                <small className="field-hint">Reason 阶段在判定超时前的最长执行时间。</small>
+                <span>Decide 超时（秒）</span>
+                <input type="number" min="5" value={settings.decide_timeout} onChange={(event) => setNumber("decide_timeout", event.target.value)} />
+                <small className="field-hint">Decide 阶段在判定超时前的最长执行时间。</small>
               </label>
             </div>
             <div className="two-col">

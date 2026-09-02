@@ -8,24 +8,21 @@ from pathlib import Path
 
 import requests
 
-from cairn.dispatcher.config import DispatchConfig, WorkerConfig
-from cairn.dispatcher.models import ReasonCheckpoint, RunningTask
+from cairn.dispatcher.config import DispatchConfig, LocalConfig, WorkerConfig
+from cairn.dispatcher.models import DecideCheckpoint, RunningTask
 from cairn.dispatcher.protocol.client import CairnClient
 from cairn.dispatcher.runtime.cancellation import TaskCancellation
 from cairn.dispatcher.runtime.containers import ContainerManager
 from cairn.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
 from cairn.dispatcher.scheduler.worker_select import choose_worker
-from cairn.dispatcher.tasks.bootstrap import run_bootstrap_task
-from cairn.dispatcher.tasks.explore import run_explore_task
-from cairn.dispatcher.tasks.reason import run_reason_task
-from cairn.server.models import Intent, ProjectDetail, ProjectSummary, Settings
+from cairn.dispatcher.tasks.decide import run_decide_task
+from cairn.dispatcher.tasks.execute import run_execute_task
+from cairn.server.models import ProjectDetail, ProjectSummary, Step, Settings
 
 LOG = logging.getLogger(__name__)
 UNHEALTHY_RETRY_AFTER_SECONDS = 5
 REJECTED_RETRY_AFTER_SECONDS = 5
 SETTINGS_REFRESH_INTERVAL_SECONDS = 15
-BOOTSTRAP_INTENT_DESCRIPTION = "bootstrap"
-BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap"
 
 
 @dataclass(slots=True)
@@ -47,7 +44,7 @@ class DispatcherLoop:
         self.cleanup_executor = ThreadPoolExecutor(max_workers=max(1, min(8, self.config.runtime.max_workers)))
         self.futures: dict[Future[str], RunningTask] = {}
         self.cleanup_futures: dict[Future[bool], tuple[str, str | None, str | None]] = {}
-        self.reason_checkpoints: dict[str, ReasonCheckpoint] = {}
+        self.decide_checkpoints: dict[str, DecideCheckpoint] = {}
         self.runtime_project_ids: set[str] = set()
         self.worker_unhealthy_until: dict[str, float] = {}
         self.worker_rejected_until: dict[tuple[str, str, str], float] = {}
@@ -80,7 +77,7 @@ class DispatcherLoop:
                     self._reap_futures()
                     self._reap_cleanup_futures()
                     summaries = self.client.list_projects()
-                    self._initialize_reason_checkpoints(summaries)
+                    self._initialize_decide_checkpoints(summaries)
                     self._refresh_runtime_projects(summaries)
                     self._cancel_inactive_tasks(summaries)
                     self._queue_container_cleanups(summaries)
@@ -209,62 +206,62 @@ class DispatcherLoop:
             )
             return False
         if self._is_initial_project(project):
-            if project.project.reason is not None:
+            if project.project.decide is not None:
                 return False
-            return self._dispatch_initial_project(project)
-        running_intent_ids = self._project_running_explore_intents(summary.id)
+            return self._dispatch_decide(project)
+        running_step_ids = self._project_running_execute_steps(summary.id)
         unclaimed_intents = [
             intent
-            for intent in project.intents
+            for intent in project.steps
             if intent.to is None
             and intent.worker is None
-            and intent.id not in running_intent_ids
+            and intent.id not in running_step_ids
             and not self._is_bootstrap_intent(intent)
         ]
-        if running_intent_ids and not unclaimed_intents:
+        if running_step_ids and not unclaimed_intents:
             self._log_changed(
                 f"{skip_scope}:explore_running",
                 logging.DEBUG,
                 "skip explore project=%s because all unclaimed intents are already running locally intents=%s",
                 summary.id,
-                sorted(running_intent_ids),
+                sorted(running_step_ids),
             )
         if unclaimed_intents:
             newest = max(unclaimed_intents, key=lambda i: i.created_at)
             export_yaml = self.client.export_project(summary.id)
-            return self._dispatch_explore(project, export_yaml, newest)
-        if project.project.reason is not None:
+            return self._dispatch_execute(project, export_yaml, newest)
+        if project.project.decide is not None:
             self._log_changed(
                 f"{skip_scope}:reason_claimed",
                 logging.DEBUG,
                 "skip reason project=%s because reason is already claimed by %s",
                 summary.id,
-                project.project.reason.worker,
+                project.project.decide.worker,
             )
             return False
-        reason_trigger = self._reason_trigger(project)
+        reason_trigger = self._decide_trigger(project)
         if reason_trigger is None:
             self._log_changed(
                 f"{skip_scope}:graph_unchanged",
                 logging.DEBUG,
-                "skip reason project=%s because reason state unchanged facts=%s hints=%s open_intents=%s intents=%s",
+                "skip reason project=%s because reason state unchanged facts=%s hints=%s open_steps=%s intents=%s",
                 summary.id,
                 len(project.facts),
                 len(project.hints),
-                self._project_open_intent_count(project),
-                len(project.intents),
+                self._project_open_step_count(project),
+                len(project.steps),
             )
             return False
         export_yaml = self.client.export_project(summary.id)
-        return self._dispatch_reason(project, export_yaml, reason_trigger)
+        return self._dispatch_decide(project, export_yaml, reason_trigger)
 
-    def _dispatch_initial_project(self, project: ProjectDetail) -> bool:
+    def _dispatch_decide(self, project: ProjectDetail) -> bool:
         intent = self._get_bootstrap_intent(project)
         if intent is None:
             intent = self._create_bootstrap_intent(project.project.id)
             if intent is None:
                 return False
-        if self._project_has_running_bootstrap(project.project.id):
+        if self._project_has_running_decide(project.project.id):
             self._log_changed(
                 f"project:{project.project.id}:skip:bootstrap_running",
                 logging.DEBUG,
@@ -282,10 +279,10 @@ class DispatcherLoop:
                 intent.worker,
             )
             return False
-        return self._dispatch_bootstrap(project, intent)
+        return self._dispatch_decide(project, intent)
 
-    def _dispatch_reason(self, project: ProjectDetail, export_yaml: str, trigger: str) -> bool:
-        selection = self._select_worker(project.project.id, "reason")
+    def _dispatch_decide(self, project: ProjectDetail, export_yaml: str, trigger: str) -> bool:
+        selection = self._select_worker(project.project.id, "decide")
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -299,7 +296,7 @@ class DispatcherLoop:
             )
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:reason")
-        claim = self.client.claim_reason(project.project.id, worker.name, trigger)
+        claim = self.client.claim_decide(project.project.id, worker.name, trigger)
         if claim.status_code in (403, 409):
             level = logging.INFO if claim.status_code == 403 else logging.WARNING
             LOG.log(
@@ -320,7 +317,7 @@ class DispatcherLoop:
             return False
         try:
             future = self.executor.submit(
-                run_reason_task,
+                run_decide_task,
                 self.config,
                 self.client,
                 self.container_manager,
@@ -331,25 +328,25 @@ class DispatcherLoop:
             )
         except Exception:
             LOG.exception("failed to submit reason task project=%s worker=%s", project.project.id, worker.name)
-            self._best_effort_release_reason(project.project.id, worker.name)
+            self._best_effort_release_decide(project.project.id, worker.name)
             return False
         self.futures[future] = RunningTask(
             project.project.id,
-            "reason",
+            "decide",
             worker.name,
             cancellation,
-            intent_id=None,
+            step_id=None,
             fact_count=len(project.facts),
             hint_count=len(project.hints),
-            open_intent_count=self._project_open_intent_count(project),
+            open_step_count=self._project_open_step_count(project),
         )
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         LOG.info("dispatched reason project=%s worker=%s trigger=%s", project.project.id, worker.name, trigger)
         return True
 
-    def _dispatch_bootstrap(self, project: ProjectDetail, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "bootstrap")
+    def _dispatch_decide(self, project: ProjectDetail, intent: Intent) -> bool:
+        selection = self._select_worker(project.project.id, "decide")
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -364,7 +361,7 @@ class DispatcherLoop:
             )
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:bootstrap")
-        claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
+        claim = self.client.step_heartbeat(project.project.id, intent.id, worker.name)
         if claim.status_code in (403, 409):
             level = logging.INFO if claim.status_code == 403 else logging.WARNING
             LOG.log(
@@ -387,7 +384,7 @@ class DispatcherLoop:
             return False
         try:
             future = self.executor.submit(
-                run_bootstrap_task,
+                run_decide_task,
                 self.config,
                 self.client,
                 self.container_manager,
@@ -400,14 +397,14 @@ class DispatcherLoop:
             LOG.exception("failed to submit bootstrap task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, "bootstrap", worker.name, cancellation, intent_id=intent.id)
+        self.futures[future] = RunningTask(project.project.id, "decide", worker.name, cancellation, step_id=intent.id)
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         LOG.info("dispatched bootstrap project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
         return True
 
-    def _dispatch_explore(self, project: ProjectDetail, export_yaml: str, intent: Intent) -> bool:
-        selection = self._select_worker(project.project.id, "explore")
+    def _dispatch_execute(self, project: ProjectDetail, export_yaml: str, intent: Intent) -> bool:
+        selection = self._select_worker(project.project.id, "execute")
         worker = selection.worker
         if worker is None:
             self._log_changed(
@@ -422,7 +419,7 @@ class DispatcherLoop:
             )
             return False
         self._clear_log_state(f"project:{project.project.id}:worker:explore")
-        claim = self.client.heartbeat(project.project.id, intent.id, worker.name)
+        claim = self.client.step_heartbeat(project.project.id, intent.id, worker.name)
         if claim.status_code in (403, 409):
             level = logging.INFO if claim.status_code == 403 else logging.WARNING
             LOG.log(
@@ -445,7 +442,7 @@ class DispatcherLoop:
             return False
         try:
             future = self.executor.submit(
-                run_explore_task,
+                run_execute_task,
                 self.config,
                 self.client,
                 self.container_manager,
@@ -459,7 +456,7 @@ class DispatcherLoop:
             LOG.exception("failed to submit explore task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, "explore", worker.name, cancellation, intent_id=intent.id)
+        self.futures[future] = RunningTask(project.project.id, "execute", worker.name, cancellation, step_id=intent.id)
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         LOG.info("dispatched explore project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
@@ -543,31 +540,31 @@ class DispatcherLoop:
         for task in self.futures.values():
             if task.project_id != project_id:
                 continue
-            if task.intent_id is None:
+            if task.step_id is None:
                 summary.append(f"{task.task_type}:{task.worker_name}")
             else:
-                summary.append(f"{task.task_type}:{task.worker_name}:{task.intent_id}")
+                summary.append(f"{task.task_type}:{task.worker_name}:{task.step_id}")
         summary.sort()
         return summary
 
-    def _project_has_running_bootstrap(self, project_id: str) -> bool:
-        return any(task.project_id == project_id and task.task_type == "bootstrap" for task in self.futures.values())
+    def _project_has_running_decide(self, project_id: str) -> bool:
+        return any(task.project_id == project_id and task.task_type == "decide" for task in self.futures.values())
 
-    def _project_running_explore_intents(self, project_id: str) -> set[str]:
+    def _project_running_execute_steps(self, project_id: str) -> set[str]:
         return {
-            task.intent_id
+            task.step_id
             for task in self.futures.values()
-            if task.project_id == project_id and task.task_type == "explore" and task.intent_id is not None
+            if task.project_id == project_id and task.task_type == "execute" and task.step_id is not None
         }
 
     def _running_project_count(self, summaries: list[ProjectSummary]) -> int:
         active_ids = {summary.id for summary in summaries if summary.status == "active"}
         return len(self.runtime_project_ids & active_ids)
 
-    def _project_open_intent_count(self, project: ProjectDetail) -> int:
-        return sum(1 for intent in project.intents if intent.to is None)
+    def _project_open_step_count(self, project: ProjectDetail) -> int:
+        return sum(1 for intent in project.steps if intent.to is None)
 
-    def _is_bootstrap_intent(self, intent: Intent) -> bool:
+    def _is_bootstrap_intent_deprecated(self, intent: Intent) -> bool:
         return (
             intent.description == BOOTSTRAP_INTENT_DESCRIPTION
             and intent.creator == BOOTSTRAP_INTENT_CREATOR
@@ -575,8 +572,8 @@ class DispatcherLoop:
             and intent.to is None
         )
 
-    def _get_bootstrap_intent(self, project: ProjectDetail) -> Intent | None:
-        intents = [intent for intent in project.intents if self._is_bootstrap_intent(intent)]
+    def _get_bootstrap_intent_deprecated(self, project: ProjectDetail) -> Intent | None:
+        intents = [intent for intent in project.steps if self._is_bootstrap_intent(intent)]
         if not intents:
             return None
         if len(intents) > 1:
@@ -588,12 +585,12 @@ class DispatcherLoop:
         fact_ids = {fact.id for fact in project.facts}
         if fact_ids != {"origin", "goal"} or len(project.facts) != 2:
             return False
-        if not project.intents:
+        if not project.steps:
             return True
-        return all(self._is_bootstrap_intent(intent) for intent in project.intents)
+        return all(self._is_bootstrap_intent(intent) for intent in project.steps)
 
     def _create_bootstrap_intent(self, project_id: str) -> Intent | None:
-        response = self.client.create_intent(
+        response = self.client.create_step(
             project_id,
             ["origin"],
             BOOTSTRAP_INTENT_DESCRIPTION,
@@ -617,9 +614,9 @@ class DispatcherLoop:
         LOG.info("created bootstrap intent project=%s intent=%s", project_id, intent.id)
         return intent
 
-    def _reason_trigger(self, project: ProjectDetail) -> str | None:
-        open_intent_count = self._project_open_intent_count(project)
-        checkpoint = self.reason_checkpoints.get(project.project.id)
+    def _decide_trigger(self, project: ProjectDetail) -> str | None:
+        open_step_count = self._project_open_step_count(project)
+        checkpoint = self.decide_checkpoints.get(project.project.id)
         if checkpoint is None:
             return "initial"
         changes: list[str] = []
@@ -627,8 +624,8 @@ class DispatcherLoop:
             changes.append(f"facts:{checkpoint.fact_count}->{len(project.facts)}")
         if len(project.hints) > checkpoint.hint_count:
             changes.append(f"hints:{checkpoint.hint_count}->{len(project.hints)}")
-        if checkpoint.open_intent_count > 0 and open_intent_count == 0:
-            changes.append(f"open_intents:{checkpoint.open_intent_count}->0")
+        if checkpoint.open_step_count > 0 and open_step_count == 0:
+            changes.append(f"open_steps:{checkpoint.open_step_count}->0")
         if not changes:
             return None
         return ",".join(changes)
@@ -684,21 +681,25 @@ class DispatcherLoop:
                     )
                 else:
                     self.worker_rejected_until.pop(rejection_key, None)
-                if outcome == "success" and task.task_type == "reason":
+                if outcome == "success" and task.task_type == "decide":
                     assert task.fact_count is not None
                     assert task.hint_count is not None
-                    assert task.open_intent_count is not None
-                    self.reason_checkpoints[task.project_id] = ReasonCheckpoint(
+                    assert task.goal_count is not None
+                    assert task.open_step_count is not None
+                    assert task.fact_count is not None
+                    assert task.hint_count is not None
+                    assert task.open_step_count is not None
+                    self.decide_checkpoints[task.project_id] = DecideCheckpoint(
                         fact_count=task.fact_count,
                         hint_count=task.hint_count,
-                        open_intent_count=task.open_intent_count,
+                        open_step_count=task.open_step_count,
                     )
                     LOG.debug(
-                        "reason checkpoint updated project=%s facts=%s hints=%s open_intents=%s",
+                        "reason checkpoint updated project=%s facts=%s hints=%s open_steps=%s",
                         task.project_id,
                         task.fact_count,
                         task.hint_count,
-                        task.open_intent_count,
+                        task.open_step_count,
                     )
             except Exception:
                 LOG.exception("task crashed project=%s task=%s worker=%s", task.project_id, task.task_type, task.worker_name)
@@ -777,35 +778,35 @@ class DispatcherLoop:
                     status,
                 )
 
-    def _initialize_reason_checkpoints(self, summaries: list[ProjectSummary]) -> None:
+    def _initialize_decide_checkpoints(self, summaries: list[ProjectSummary]) -> None:
         for summary in summaries:
             if summary.status != "active":
                 continue
-            if summary.id in self.reason_checkpoints:
+            if summary.id in self.decide_checkpoints:
                 continue
-            open_intent_count = summary.working_intent_count + summary.unclaimed_intent_count
-            if open_intent_count == 0:
+            open_step_count = summary.working_step_count + summary.unclaimed_step_count
+            if open_step_count == 0:
                 continue
-            self.reason_checkpoints[summary.id] = ReasonCheckpoint(
+            self.decide_checkpoints[summary.id] = DecideCheckpoint(
                 fact_count=summary.fact_count,
                 hint_count=summary.hint_count,
-                open_intent_count=open_intent_count,
+                open_step_count=open_step_count,
             )
             LOG.debug(
-                "reason checkpoint initialized project=%s facts=%s hints=%s open_intents=%s",
+                "reason checkpoint initialized project=%s facts=%s hints=%s open_steps=%s",
                 summary.id,
                 summary.fact_count,
                 summary.hint_count,
-                open_intent_count,
+                open_step_count,
             )
 
-    def _best_effort_release(self, project_id: str, intent_id: str, worker_name: str) -> None:
-        response = self.client.release(project_id, intent_id, worker_name)
+    def _best_effort_release(self, project_id: str, step_id: str, worker_name: str) -> None:
+        response = self.client.release_step(project_id, step_id, worker_name)
         if not response.ok and response.status_code not in (403, 409):
-            LOG.warning("release failed project=%s intent=%s worker=%s status=%s", project_id, intent_id, worker_name, response.status_code)
+            LOG.warning("release failed project=%s intent=%s worker=%s status=%s", project_id, step_id, worker_name, response.status_code)
 
-    def _best_effort_release_reason(self, project_id: str, worker_name: str) -> None:
-        response = self.client.release_reason(project_id, worker_name)
+    def _best_effort_release_decide(self, project_id: str, worker_name: str) -> None:
+        response = self.client.release_decide(project_id, worker_name)
         if not response.ok and response.status_code not in (403, 409):
             LOG.warning("reason release failed project=%s worker=%s status=%s", project_id, worker_name, response.status_code)
 
@@ -827,7 +828,8 @@ class DispatcherLoop:
 
     def _validate_server_settings(self, settings: Settings) -> None:
         interval = self.config.runtime.interval
-        for name, value in (("intent_timeout", settings.intent_timeout), ("reason_timeout", settings.reason_timeout)):
+        # Cairn_Y: use new timeout field names
+        for name, value in (("step_timeout", settings.step_timeout), ("decide_timeout", settings.decide_timeout)):
             if value <= interval:
                 raise RuntimeError(
                     f"server {name}={value}s must be greater than dispatcher interval={interval}s"

@@ -12,6 +12,7 @@ dispatch.yaml.bak
 # Local notes / transcripts that may contain target info.
 未命名.txt
 *.local.txt
+/tools/*.log
 
 cairn/frontend/node_modules/
 cairn/frontend/dist/
