@@ -128,6 +128,90 @@ class CairnClient:
             json={"from": from_ids, "description": description, "creator": creator, "worker": None},
         )
 
+    # ── Decide (was Reason) ────────────────────────────────────────────
+
+    def claim_decide(self, project_id: str, worker: str, trigger: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/decide/claim",
+                                  json={"worker": worker, "trigger": trigger})
+
+    def decide_heartbeat(self, project_id: str, worker: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/decide/heartbeat",
+                                  json={"worker": worker})
+
+    def release_decide(self, project_id: str, worker: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/decide/release",
+                                  json={"worker": worker})
+
+    claim_reason = claim_decide
+    reason_heartbeat = decide_heartbeat
+    release_reason = release_decide
+
+    # ── Steps ──────────────────────────────────────────────────────────
+
+    def create_step(self, project_id: str, from_ids: list[str], description: str,
+                    creator: str, goal_id: str | None = None, priority: int = 0) -> ApiResult:
+        body: dict = {"from": from_ids, "description": description, "creator": creator, "worker": None}
+        if goal_id is not None:
+            body["goal_id"] = goal_id
+        if priority:
+            body["priority"] = priority
+        return self._request_json("POST", f"/projects/{project_id}/steps", json=body)
+
+    def update_step(self, project_id: str, step_id: str, priority: int | None = None,
+                    goal_id: str | None = None, abandoned: bool | None = None) -> ApiResult:
+        body: dict = {}
+        if priority is not None:
+            body["priority"] = priority
+        if abandoned is not None:
+            body["abandoned"] = abandoned
+        return self._request_json("PATCH", f"/projects/{project_id}/steps/{step_id}", json=body)
+
+    def step_heartbeat(self, project_id: str, step_id: str, worker: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/steps/{step_id}/heartbeat",
+                                  json={"worker": worker})
+
+    def release_step(self, project_id: str, step_id: str, worker: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/steps/{step_id}/release",
+                                  json={"worker": worker})
+
+    def conclude_step(self, project_id: str, step_id: str, worker: str, description: str,
+                      finding: dict | None = None) -> ApiResult:
+        body: dict = {"worker": worker, "description": description}
+        if finding is not None:
+            body["finding"] = finding
+        return self._request_json("POST", f"/projects/{project_id}/steps/{step_id}/conclude", json=body)
+
+    heartbeat = step_heartbeat
+    release = release_step
+    conclude = conclude_step
+    create_intent = create_step
+
+    # ── Goals ──────────────────────────────────────────────────────────
+
+    def create_goal(self, project_id: str, description: str, creator: str,
+                    parent_goal_id: str | None = None, priority: int = 0) -> ApiResult:
+        body: dict = {"description": description, "creator": creator}
+        if parent_goal_id is not None:
+            body["parent_goal_id"] = parent_goal_id
+        if priority:
+            body["priority"] = priority
+        return self._request_json("POST", f"/projects/{project_id}/goals", json=body)
+
+    def update_goal(self, project_id: str, goal_id: str, status: str | None = None,
+                    priority: int | None = None) -> ApiResult:
+        body: dict = {}
+        if status is not None:
+            body["status"] = status
+        if priority is not None:
+            body["priority"] = priority
+        return self._request_json("PATCH", f"/projects/{project_id}/goals/{goal_id}", json=body)
+
+    def complete_goal(self, project_id: str, goal_id: str, from_ids: list[str],
+                      description: str, worker: str) -> ApiResult:
+        return self._request_json("POST", f"/projects/{project_id}/goals/{goal_id}/complete",
+                                  json={"from": from_ids, "description": description, "worker": worker})
+
+
     def _request_json(self, method: str, path: str, json: dict[str, Any]) -> ApiResult:
         try:
             response = self._session().request(

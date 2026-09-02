@@ -11,6 +11,7 @@ created by :mod:`cairn.server.auth_db` and the request/response models defined i
 
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 import uuid
@@ -25,6 +26,7 @@ from cairn.server.db import get_conn
 from cairn.server.settings_service import load_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+REGISTRATION_ENV = "CAIRN_ALLOW_REGISTRATION"
 
 # bcrypt work factor (requirement 1.3: minimum cost factor of 12).
 BCRYPT_COST = 12
@@ -189,6 +191,14 @@ def register(body: RegisterRequest, response: Response, request: Request) -> Use
     password as a bcrypt hash with cost 12 (requirement 1.3), creates a session
     with a 24-hour expiry, and sets an HTTP-only session cookie (requirement 1.1).
     """
+    registration_enabled = os.environ.get(REGISTRATION_ENV, "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not registration_enabled:
+        raise HTTPException(status_code=403, detail="Registration is disabled")
     _verify_captcha(body.captcha_id, body.captcha_answer)
     username_lower = body.username.lower()
     now = datetime.now(timezone.utc)

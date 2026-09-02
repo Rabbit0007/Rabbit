@@ -34,7 +34,7 @@ import os
 from typing import Any
 
 import requests
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Request
 
 from cairn.server.db import get_conn
 from cairn.server.workers_models import (
@@ -70,6 +70,8 @@ INTERNAL_TIMEOUT_ENV = "CAIRN_DISPATCHER_INTERNAL_TIMEOUT"
 # latency-sensitive status poll. The 30.0s default comfortably exceeds the
 # dispatcher's own 20s healthcheck_timeout (dispatch.yaml).
 TEST_TIMEOUT_ENV = "CAIRN_DISPATCHER_INTERNAL_TEST_TIMEOUT"
+INTERNAL_TOKEN_ENV = "CAIRN_DISPATCHER_INTERNAL_TOKEN"
+INTERNAL_TOKEN_HEADER = "X-Cairn-Dispatcher-Token"
 DEFAULT_INTERNAL_URL = "http://127.0.0.1:8989"
 DEFAULT_INTERNAL_TIMEOUT = 2.0
 DEFAULT_INTERNAL_TEST_TIMEOUT = 30.0
@@ -137,6 +139,13 @@ def _test_timeout() -> float:
     return _resolve_timeout(TEST_TIMEOUT_ENV, DEFAULT_INTERNAL_TEST_TIMEOUT)
 
 
+def _internal_auth_kwargs() -> dict[str, dict[str, str]]:
+    token = os.environ.get(INTERNAL_TOKEN_ENV, "").strip()
+    if not token:
+        return {}
+    return {"headers": {INTERNAL_TOKEN_HEADER: token}}
+
+
 def _fetch_status_snapshot() -> dict[str, Any]:
     """Proxy to the dispatcher internal status endpoint and return its JSON.
 
@@ -148,7 +157,7 @@ def _fetch_status_snapshot() -> dict[str, Any]:
     """
     url = _status_url()
     try:
-        response = requests.get(url, timeout=_status_timeout())
+        response = requests.get(url, timeout=_status_timeout(), **_internal_auth_kwargs())
     except requests.RequestException as exc:
         LOG.warning("dispatcher internal status unreachable url=%s error=%s", url, exc)
         raise _unavailable_exception()
@@ -183,7 +192,13 @@ def _request_internal_json(
 ) -> dict[str, Any]:
     url = _internal_url(path)
     try:
-        response = requests.request(method, url, json=payload, timeout=timeout)
+        response = requests.request(
+            method,
+            url,
+            json=payload,
+            timeout=timeout,
+            **_internal_auth_kwargs(),
+        )
     except requests.RequestException as exc:
         LOG.warning("dispatcher internal request unreachable method=%s url=%s error=%s", method, url, exc)
         raise HTTPException(status_code=503, detail={"message": unavailable_message, "last_updated": None})
@@ -508,7 +523,7 @@ def get_worker_config() -> WorkerConfigResponse:
 
 
 @router.put("/config", response_model=WorkerConfigResponse)
-def update_worker_config(config: WorkerConfigUpdate) -> WorkerConfigResponse:
+def update_worker_config(config: WorkerConfigUpdate, request: Request) -> WorkerConfigResponse:
     """Persist and apply the dispatcher worker list.
 
     The dispatcher validates and writes the underlying YAML file before applying
@@ -525,7 +540,19 @@ def update_worker_config(config: WorkerConfigUpdate) -> WorkerConfigResponse:
         from cairn.server.activity_service import record_audit, record_notification
 
         worker_count = len(config.workers) if getattr(config, "workers", None) is not None else 0
-        record_audit("worker.config", f"更新工作节点配置（{worker_count} 个节点）", target_type="worker")
+        user = getattr(request.state, "user", None)
+        if isinstance(user, dict) and user.get("username"):
+            actor = str(user["username"])
+        elif getattr(request.state, "auth_kind", None) == "internal":
+            actor = "internal-service"
+        else:
+            actor = "system"
+        record_audit(
+            "worker.config",
+            f"更新工作节点配置（{worker_count} 个节点）",
+            actor=actor,
+            target_type="worker",
+        )
         record_notification(
             f"工作节点配置已更新",
             level="info",

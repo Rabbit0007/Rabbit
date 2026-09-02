@@ -31,7 +31,6 @@ from cairn.dispatcher.tasks.common import (
     run_healthcheck,
     run_worker_process,
     write_conclude_result,
-    write_conclude_result_with_fact_id,
 )
 from cairn.dispatcher.workers.registry import get_driver
 from cairn.server.models import Intent, ProjectDetail
@@ -191,13 +190,12 @@ def run_bootstrap_task(
                 )
                 best_effort_release(client, project.project.id, intent.id, worker.name)
                 return "rejected"
-            return _write_bootstrap_complete_result(
+            return write_conclude_result(
                 client,
                 project.project.id,
                 intent.id,
                 worker.name,
                 data["fact_description"],
-                data["complete_description"],
                 source="bootstrap",
                 phase_ms=execute_ms,
                 total_ms=int((time.perf_counter() - task_started) * 1000),
@@ -422,85 +420,3 @@ def _bootstrap_prompt_replacements(project: ProjectDetail) -> dict[str, str]:
         "scope_policy": format_scope_policy(scope_bundle["scope_policy"]),
         "user_assertions": format_user_assertions(scope_bundle["user_assertions"]),
     }
-
-
-def _write_bootstrap_complete_result(
-    client: CairnClient,
-    project_id: str,
-    intent_id: str,
-    worker_name: str,
-    fact_description: str,
-    complete_description: str,
-    *,
-    source: str,
-    phase_ms: int,
-    total_ms: int | None = None,
-) -> str:
-    conclude = write_conclude_result_with_fact_id(
-        client,
-        project_id,
-        intent_id,
-        worker_name,
-        fact_description,
-        source=source,
-        phase_ms=phase_ms,
-        total_ms=total_ms,
-    )
-    if conclude.status != "success":
-        return "failed"
-    if conclude.fact_id is None:
-        LOG.warning(
-            "bootstrap complete deferred because conclude response omitted fact id project=%s intent=%s worker=%s source=%s",
-            project_id,
-            intent_id,
-            worker_name,
-            source,
-        )
-        return "success"
-
-    response = client.complete(project_id, [conclude.fact_id], complete_description, worker_name)
-    if response.status_code in (403, 409):
-        LOG.info(
-            "bootstrap complete deferred project=%s intent=%s worker=%s source=%s status=%s fact_id=%s",
-            project_id,
-            intent_id,
-            worker_name,
-            source,
-            response.status_code,
-            conclude.fact_id,
-        )
-        return "success"
-    if not response.ok:
-        LOG.warning(
-            "bootstrap complete write failed project=%s intent=%s worker=%s source=%s fact_id=%s status=%s body=%s",
-            project_id,
-            intent_id,
-            worker_name,
-            source,
-            conclude.fact_id,
-            response.status_code,
-            response.text,
-        )
-        return "success"
-    if total_ms is None:
-        LOG.info(
-            "bootstrap completed project=%s intent=%s worker=%s source=%s from=%s phase_ms=%s",
-            project_id,
-            intent_id,
-            worker_name,
-            source,
-            [conclude.fact_id],
-            phase_ms,
-        )
-    else:
-        LOG.info(
-            "bootstrap completed project=%s intent=%s worker=%s source=%s from=%s phase_ms=%s total_ms=%s",
-            project_id,
-            intent_id,
-            worker_name,
-            source,
-            [conclude.fact_id],
-            phase_ms,
-            total_ms,
-        )
-    return "success"

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     source_worker TEXT,
     source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
     evidence_json TEXT NOT NULL DEFAULT '[]',
+    proof_packets_json TEXT NOT NULL DEFAULT '[]',
     process_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('confirmed', 'ignored')),
     UNIQUE(project_id, fact_id)
@@ -101,6 +102,34 @@ CREATE TABLE IF NOT EXISTS export_records (
 CREATE INDEX IF NOT EXISTS idx_export_records_time
     ON export_records(created_at);
 
+CREATE TABLE IF NOT EXISTS report_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content BLOB NOT NULL,
+    analysis_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_templates_created
+    ON report_templates(created_at);
+
+CREATE TABLE IF NOT EXISTS report_evidence_artifacts (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    fact_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('screenshot')),
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    content BLOB NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_evidence_fact
+    ON report_evidence_artifacts(project_id, fact_id);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -137,6 +166,7 @@ VULNERABILITY_COLUMNS: dict[str, str] = {
     "source_worker": "TEXT",
     "source_fact_ids_json": "TEXT NOT NULL DEFAULT '[]'",
     "evidence_json": "TEXT NOT NULL DEFAULT '[]'",
+    "proof_packets_json": "TEXT NOT NULL DEFAULT '[]'",
     "process_json": "TEXT NOT NULL DEFAULT '[]'",
     "status": "TEXT NOT NULL DEFAULT 'confirmed'",
 }

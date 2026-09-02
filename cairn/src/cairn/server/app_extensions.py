@@ -12,6 +12,7 @@ from cairn.server.routers import (
     timeline,
     vulnerabilities,
     workers,
+    report_templates,
 )
 
 _protected = [Depends(require_auth)]
@@ -30,3 +31,4 @@ def include_extension_routers(app: FastAPI) -> None:
     app.include_router(timeline.router, dependencies=_protected)
     app.include_router(activity.router, dependencies=_protected)
     app.include_router(campaign.router, dependencies=_protected)
+    app.include_router(report_templates.router, dependencies=_protected)

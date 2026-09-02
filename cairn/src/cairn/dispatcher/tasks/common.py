@@ -279,3 +279,54 @@ def best_effort_release(client: CairnClient, project_id: str, intent_id: str, wo
             worker_name,
             response.status_code,
         )
+
+
+# ── Decide/Execute helpers ──────────────────────────────────────────────
+
+def best_effort_release_decide(client, project_id: str, worker_name: str) -> None:
+    response = client.release_decide(project_id, worker_name)
+    if not response.ok and response.status_code not in (403, 409):
+        LOG.warning("decide release failed project=%s worker=%s status=%s", project_id, worker_name, response.status_code)
+    elif response.ok:
+        LOG.info("released decide project=%s worker=%s", project_id, worker_name)
+
+
+def project_allows_conclude_fallback(client, project_id: str, *, worker_name: str, step_id: str | None = None, intent_id: str | None = None) -> bool:
+    sid = step_id or intent_id
+    project = client.get_project(project_id)
+    if project.project.status == "active":
+        return True
+    LOG.info("skip conclude fallback because project is no longer active project=%s step=%s worker=%s status=%s", project_id, sid, worker_name, project.project.status)
+    return False
+
+
+def write_conclude_result_with_fact_id(client, project_id: str, step_id: str, worker_name: str, description: str, *, source: str, phase_ms: int | None = None, total_ms: int | None = None, finding: dict | None = None):
+    response = client.conclude_step(project_id, step_id, worker_name, description, finding=finding)
+    if response.ok:
+        fact_id = None
+        if isinstance(response.data, dict):
+            fact = response.data.get("fact")
+            if isinstance(fact, dict):
+                candidate = fact.get("id")
+                if isinstance(candidate, str) and candidate:
+                    fact_id = candidate
+        LOG.info("step concluded project=%s step=%s worker=%s source=%s phase_ms=%s total_ms=%s", project_id, step_id, worker_name, source, phase_ms, total_ms)
+        return type('ConcludeWriteResult', (), {'status': 'success', 'fact_id': fact_id})()
+    if response.status_code == 403:
+        LOG.info("project became inactive during conclude project=%s step=%s", project_id, step_id)
+    else:
+        LOG.warning("conclude write failed project=%s step=%s worker=%s status=%s", project_id, step_id, worker_name, response.status_code)
+    best_effort_release(client, project_id, step_id, worker_name)
+    return type('ConcludeWriteResult', (), {'status': 'failed', 'fact_id': None})()
+
+
+def write_conclude_result(client, project_id: str, step_id: str, worker_name: str, description: str, *, source: str, phase_ms: int | None = None, total_ms: int | None = None, finding: dict | None = None) -> str:
+    return write_conclude_result_with_fact_id(client, project_id, step_id, worker_name, description, source=source, phase_ms=phase_ms, total_ms=total_ms, finding=finding).status
+
+
+def task_healthcheck_enabled(config):
+    """Check if task-level healthcheck is enabled."""
+    if hasattr(config.runtime, "execution") and config.runtime.execution == "local":
+        return False
+    return getattr(config.runtime, "worker_healthcheck", "startup_only") == "startup_and_task"
+

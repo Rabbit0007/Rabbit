@@ -31,12 +31,14 @@ from __future__ import annotations
 import errno
 import logging
 import os
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
+from fastapi import Depends, FastAPI, HTTPException, Request
 from pydantic import ValidationError
 
 from cairn.dispatcher.config import DispatchConfig, WorkerConfig
@@ -50,6 +52,8 @@ LOG = logging.getLogger(__name__)
 ENABLE_ENV = "CAIRN_DISPATCHER_INTERNAL_API"
 HOST_ENV = "CAIRN_DISPATCHER_INTERNAL_HOST"
 PORT_ENV = "CAIRN_DISPATCHER_INTERNAL_PORT"
+TOKEN_ENV = "CAIRN_DISPATCHER_INTERNAL_TOKEN"
+TOKEN_HEADER = "x-cairn-dispatcher-token"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8989
@@ -58,6 +62,7 @@ WORKER_CONFIG_PATH = "/internal/workers/config"
 WORKER_TEST_PATH = "/internal/workers/test"
 SECRET_MASK = "********"
 SECRET_KEY_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+HEALTHCHECK_FAILURE_HOLD_SECONDS = 300
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -199,7 +204,10 @@ def _validate_worker_payloads(loop: "DispatcherLoop", payload: Any) -> list[Work
     if not isinstance(raw_workers, list):
         raise ValueError("workers must be an array")
     worker_data = _preserve_masked_secrets(raw_workers, _existing_workers_by_name(loop))
-    return [WorkerConfig.model_validate(worker) for worker in worker_data]
+    workers = [WorkerConfig.model_validate(worker) for worker in worker_data]
+    if not any(worker.enabled for worker in workers):
+        raise ValueError("at least one worker must be enabled")
+    return workers
 
 
 def _config_with_workers(loop: "DispatcherLoop", workers: list[WorkerConfig]) -> DispatchConfig:
@@ -467,27 +475,34 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
     }
 
 
-def create_internal_app(loop: "DispatcherLoop"):
+def create_internal_app(loop: "DispatcherLoop", *, internal_token: str | None = None):
     """Create the minimal FastAPI app exposing dispatcher internal endpoints."""
-    from fastapi import FastAPI, HTTPException
-
     app = FastAPI(title="Cairn Dispatcher Internal API", docs_url=None, redoc_url=None, openapi_url=None)
+
+    def require_internal_token(request: Request) -> None:
+        if internal_token is None:
+            return
+        presented = request.headers.get(TOKEN_HEADER, "")
+        if not presented or not secrets.compare_digest(presented, internal_token):
+            raise HTTPException(status_code=401, detail="Internal authentication required")
+
+    protected = [Depends(require_internal_token)]
 
     @app.get("/internal/health")
     def health() -> dict[str, Any]:
         return {"status": "ok", "now": time.time()}
 
-    @app.get("/internal/status")
+    @app.get("/internal/status", dependencies=protected)
     def status() -> dict[str, Any]:
         # build_status_snapshot is read-only and never raises; if it somehow
         # does, FastAPI returns a 500 and the dispatcher loop is unaffected.
         return build_status_snapshot(loop)
 
-    @app.get(WORKER_CONFIG_PATH)
+    @app.get(WORKER_CONFIG_PATH, dependencies=protected)
     def worker_config() -> dict[str, Any]:
         return _workers_config_payload(loop)
 
-    @app.put(WORKER_CONFIG_PATH)
+    @app.put(WORKER_CONFIG_PATH, dependencies=protected)
     def update_worker_config(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             workers = _validate_worker_payloads(loop, payload)
@@ -511,7 +526,7 @@ def create_internal_app(loop: "DispatcherLoop"):
             loop.config = config
         return _workers_config_payload(loop)
 
-    @app.post(WORKER_TEST_PATH)
+    @app.post(WORKER_TEST_PATH, dependencies=protected)
     def test_worker(payload: dict[str, Any]) -> dict[str, Any]:
         worker_payload = payload.get("worker") if isinstance(payload, dict) else None
         if not isinstance(worker_payload, dict):
@@ -538,6 +553,12 @@ def create_internal_app(loop: "DispatcherLoop"):
                 "preview": str(exc),
                 "command": "-",
             }
+        unhealthy_until = getattr(loop, "worker_unhealthy_until", None)
+        if isinstance(unhealthy_until, dict):
+            if result.ok:
+                unhealthy_until.pop(worker.name, None)
+            else:
+                unhealthy_until[worker.name] = time.time() + HEALTHCHECK_FAILURE_HOLD_SECONDS
         return _healthcheck_payload(result)
 
     return app
@@ -562,6 +583,10 @@ def start_internal_api(
 
     resolved_host = host if host is not None else _resolve_host()
     resolved_port = port if port is not None else _resolve_port()
+    internal_token = os.environ.get(TOKEN_ENV, "").strip()
+    if not internal_token:
+        LOG.error("dispatcher internal API requires %s", TOKEN_ENV)
+        return False
 
     try:
         import uvicorn
@@ -572,7 +597,7 @@ def start_internal_api(
         if callable(enable_tracking):
             enable_tracking(history_size)
 
-        app = create_internal_app(loop)
+        app = create_internal_app(loop, internal_token=internal_token)
         config = uvicorn.Config(
             app,
             host=resolved_host,

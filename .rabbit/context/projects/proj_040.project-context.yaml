@@ -1,0 +1,26 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_040
+  target_summary: 'http://10.102.35.135/ncycx/
+
+    http://10.102.35.135
+
+    http://10.102.35.134'
+  goal: 发现所有的安全漏洞,获取到服务器权限执行whoami命令进行返回
+  notes: 'f006-f008 包含越出声明目标的宿主机/控制面探测记录，仅保留用于审计，不得继续沿这些事实扩展。'
+override:
+  authorization: {}
+  scope:
+    restrict_to_origin_targets: true
+    allowed_targets:
+      - 10.102.35.134
+      - 10.102.35.135
+    allow_loopback_targets: false
+    allow_private_targets: false
+    allow_link_local_targets: false
+    blocked_hosts:
+      - localhost
+      - host.docker.internal
+      - gateway.docker.internal
+  output: {}

@@ -14,16 +14,20 @@ Response shapes follow :mod:`cairn.server.vulnerabilities_models`.
 
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import io
 import json
 import re
 import zipfile
+import uuid
 from urllib.parse import urlsplit
 from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from datetime import datetime, timezone
 
@@ -45,9 +49,15 @@ from cairn.server.vulnerabilities_models import (
     VulnerabilityStatus,
     VulnerabilityStatusUpdate,
 )
-from cairn.server.vulnerability_extraction import scan_all_projects
+from cairn.server.report_agent_service import request_report_sync
 
 router = APIRouter(prefix="/api/vulnerabilities", tags=["vulnerabilities"])
+
+
+class ScreenshotEvidenceUpload(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    mime_type: str
+    content_base64: str
 
 # Display ordering for the report: most severe first, then most recently
 # discovered, with the id as a final deterministic tiebreaker. Implemented as a
@@ -89,6 +99,7 @@ def _vulnerability_select(where_sql: str) -> str:
                 v.source_worker AS source_worker,
                 v.source_fact_ids_json AS source_fact_ids_json,
                 v.evidence_json AS evidence_json,
+                v.proof_packets_json AS proof_packets_json,
                 v.process_json AS process_json
             FROM vulnerabilities v
             JOIN projects p ON p.id = v.project_id
@@ -101,6 +112,7 @@ def _row_to_vulnerability(row) -> Vulnerability:
     data = dict(row)
     data["source_fact_ids"] = _decode_json_list(data.pop("source_fact_ids_json", None))
     data["evidence"] = _decode_json_list(data.pop("evidence_json", None))
+    data["proof_packets"] = _decode_json_list(data.pop("proof_packets_json", None))
     data["process"] = _decode_json_list(data.pop("process_json", None))
     return Vulnerability(**data)
 
@@ -524,8 +536,23 @@ def _reconstructed_http_packets(vulns: list[Vulnerability]) -> list[dict[str, st
 
 
 def _proof_packets(vulns: list[Vulnerability]) -> list[dict[str, str]]:
-    """Reconstruct proof packets from same-project facts without fixed payloads."""
-    return _reconstructed_http_packets(vulns)
+    """Return only packets preserved by the report agent; never invent a packet."""
+    packets: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for vuln in vulns:
+        for packet in vuln.proof_packets or []:
+            normalized = {
+                "title": str(packet.get("title") or "漏洞证明").strip(),
+                "request": str(packet.get("request") or "").strip(),
+                "response": str(packet.get("response") or "").strip(),
+                "note": str(packet.get("note") or "").strip(),
+            }
+            key = (normalized["title"], normalized["request"], normalized["response"])
+            if key in seen or not (normalized["request"] or normalized["response"]):
+                continue
+            seen.add(key)
+            packets.append(normalized)
+    return packets
 
 
 def _evidence_score(text: str) -> int:
@@ -697,6 +724,60 @@ def vulnerabilities_summary() -> VulnerabilitySummary:
             counts[vuln.severity] += 1
 
     return VulnerabilitySummary(**counts)
+
+
+@router.post("/{vulnerability_id}/evidence/screenshot")
+def upload_vulnerability_screenshot(vulnerability_id: str, payload: ScreenshotEvidenceUpload) -> dict[str, str]:
+    target = next(
+        (item for item in _query_filtered_vulnerabilities(None, None) if item.id == vulnerability_id),
+        None,
+    )
+    if target is None:
+        raise HTTPException(404, "Vulnerability not found")
+    mime = payload.mime_type.lower().strip()
+    if mime not in {"image/png", "image/jpeg"}:
+        raise HTTPException(422, "只支持 PNG 或 JPEG 截图")
+    try:
+        content = base64.b64decode(payload.content_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(422, "截图内容无效") from exc
+    valid_magic = content.startswith(b"\x89PNG\r\n\x1a\n") or content.startswith(b"\xff\xd8\xff")
+    if not valid_magic or len(content) > 8 * 1024 * 1024:
+        raise HTTPException(422, "截图无效或超过 8MB")
+    artifact_id = f"evi_{uuid.uuid4().hex[:16]}"
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO report_evidence_artifacts
+                (id, project_id, fact_id, kind, filename, mime_type, content, sha256, created_at)
+            VALUES (?, ?, ?, 'screenshot', ?, ?, ?, ?, ?)
+            """,
+            (
+                artifact_id, target.project_id, target.fact_id, payload.filename,
+                mime, content, hashlib.sha256(content).hexdigest(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+    return {"id": artifact_id, "status": "saved"}
+
+
+@router.get("/{vulnerability_id}/evidence")
+def list_vulnerability_evidence(vulnerability_id: str) -> list[dict]:
+    target = next(
+        (item for item in _query_filtered_vulnerabilities(None, None) if item.id == vulnerability_id),
+        None,
+    )
+    if target is None:
+        raise HTTPException(404, "Vulnerability not found")
+    fact_ids = target.related_fact_ids or [target.fact_id]
+    placeholders = ",".join("?" for _ in fact_ids)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT id, kind, filename, mime_type, created_at FROM report_evidence_artifacts "
+            f"WHERE project_id = ? AND fact_id IN ({placeholders}) ORDER BY created_at",
+            (target.project_id, *fact_ids),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 @router.get("/{vulnerability_id}/report", response_model=VulnerabilityNarrativeReport)
@@ -1701,7 +1782,7 @@ def refresh_vulnerabilities() -> VulnerabilitySummary:
     is the updated summary so callers can reflect the new totals without a
     separate request to ``/summary``.
     """
-    scan_all_projects()
+    request_report_sync()
     summary = vulnerabilities_summary()
     total = summary.critical + summary.high + summary.medium + summary.low
     record_audit("vulnerability.refresh", "刷新漏洞报告汇总", target_type="vulnerability")

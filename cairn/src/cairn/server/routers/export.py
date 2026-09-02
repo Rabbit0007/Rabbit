@@ -5,7 +5,7 @@ import yaml
 
 from cairn.server.db import get_conn
 from cairn.server.text_normalization import normalize_hint_content
-from cairn.server.services import expire_reason_leases, expire_workers, get_project_or_404
+from cairn.server.services import expire_decide_leases, expire_workers, get_project_or_404
 
 router = APIRouter(tags=["export"])
 
@@ -22,7 +22,7 @@ def format_export_timestamp(value: str | None) -> str | None:
 
 def _load_project_data(conn, project_id: str):
     expire_workers(conn, project_id)
-    expire_reason_leases(conn, project_id)
+    expire_decide_leases(conn, project_id)
     proj = get_project_or_404(conn, project_id)
 
     facts = conn.execute(
@@ -33,14 +33,14 @@ def _load_project_data(conn, project_id: str):
         (project_id,),
     ).fetchall()
     intents = conn.execute(
-        "SELECT * FROM intents WHERE project_id = ? ORDER BY created_at",
+        "SELECT * FROM steps WHERE project_id = ? ORDER BY created_at",
         (project_id,),
     ).fetchall()
 
     sources_by_intent = {}
     for i in intents:
         rows = conn.execute(
-            "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
+            "SELECT fact_id FROM step_sources WHERE step_id = ? AND project_id = ? ORDER BY rowid",
             (i["id"], project_id),
         ).fetchall()
         sources_by_intent[i["id"]] = [r["fact_id"] for r in rows]
@@ -79,6 +79,24 @@ def _export_yaml(conn, project_id: str) -> str:
 
     data["facts"] = [{"id": f["id"], "description": f["description"]} for f in facts]
 
+    goals = conn.execute(
+        "SELECT * FROM goals WHERE project_id = ? ORDER BY priority, created_at",
+        (project_id,),
+    ).fetchall()
+    if goals:
+        data["goals"] = [
+            {
+                "id": g["id"],
+                "description": g["description"],
+                "parent_goal_id": g["parent_goal_id"],
+                "status": g["status"],
+                "priority": g["priority"],
+                "created_at": format_export_timestamp(g["created_at"]),
+                "completed_at": format_export_timestamp(g["completed_at"]),
+            }
+            for g in goals
+        ]
+
     intent_list = []
     for i in intents:
         entry: dict = {
@@ -93,7 +111,7 @@ def _export_yaml(conn, project_id: str) -> str:
         intent_list.append(entry)
 
     if intent_list:
-        data["intents"] = intent_list
+        data["steps"] = intent_list
 
     return yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
 

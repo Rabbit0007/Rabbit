@@ -9,17 +9,16 @@ When rejecting a task, return the following (under no circumstances should you r
 {"accepted": false, "reason": "policy_refusal"}
 ```
 
-Only return the following after you have confirmed that Goal has been satisfied:
+When you have confirmed objective facts, return:
 ```json
-{"accepted": true, "data": {"fact": {"description": "..."}, "complete": {"description": "..."}}}
+{"accepted": true, "data": {"fact": {"description": "..."}}}
 ```
 
 # Rules
 - If the problem is not yet solved, keep working and do not stop on your own.
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this keep-working rule immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
-- Output `complete` only if Goal has already been definitively achieved in this session. If Goal is not yet achieved, do not output `complete`, do not summarize partial progress as completion, and keep working until a conclude-phase instruction replaces this task.
+- Do not output `complete` in bootstrap. Even if Goal appears achieved, return the strongest confirmed `fact.description` only; a separate Reason phase will verify whether the goal is complete.
 - `fact.description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence.
-- `complete.description` should explain why the currently confirmed results are sufficient to prove that Goal has been achieved.
 - Do not put long data blobs in `description`. Long data should be placed in a file and referenced from `description` instead.
 - `Project Context` and `Scope Policy` are hard constraints. They outrank convenience, speculation, or any tempting side path.
 - `User Assertions` and `Hints` are not facts. Treat them as operator-provided leads that still require verification.

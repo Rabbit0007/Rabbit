@@ -307,11 +307,10 @@ def build_scope_policy(
     goal: str,
     hints: Iterable[HintRecord | dict[str, Any]],
 ) -> dict[str, Any]:
-    # Scope guard disabled: it misclassified command output (e.g. `ifconfig`
-    # printing 127.0.0.1 / private IPs) as out-of-scope drift, which blocked
-    # vulnerability-evidence facts from being written and broke core discovery.
-    # Returns empty bundles so prompt tokens render as inert empty JSON,
-    # aligning behavior with upstream Cairn (no scope enforcement).
+    # Keep Cairn's fact graph semantics intact. Network egress is enforced at
+    # the worker/container boundary; command output must never be rejected just
+    # because it mentions localhost, a private address, or another discovered
+    # endpoint. Those strings are often the evidence the graph needs to retain.
     return {
         "project_context": {},
         "scope_policy": {},

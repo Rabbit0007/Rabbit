@@ -21,6 +21,98 @@ def _unwrap_wrapped_payload(payload: dict[str, Any]) -> tuple[bool | None, dict[
     return None, None
 
 
+# ── Decide payload validation ──────────────────────────────────────────
+
+def validate_decide_payload(
+    payload: dict[str, Any], open_steps_empty: bool, max_steps: int,
+) -> tuple[str, dict[str, Any] | None]:
+    accepted, data = _unwrap_wrapped_payload(payload)
+    if accepted is False:
+        return "rejected", None
+    if accepted is None:
+        if not isinstance(payload, dict):
+            raise ValueError("accepted must be true or false")
+        data = payload
+
+    if not isinstance(data, dict):
+        raise ValueError("accepted must be true or false")
+
+    # Check for complete
+    complete = data.get("complete")
+    if complete is not None:
+        if not isinstance(complete, dict):
+            raise ValueError("complete must be an object")
+        if "goal_id" not in complete or "from" not in complete or "description" not in complete:
+            raise ValueError("complete must have goal_id, from, and description")
+        return "complete", complete
+
+    # Check for steps
+    steps = data.get("steps")
+    if steps is not None:
+        if not isinstance(steps, list):
+            raise ValueError("steps must be an array")
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict) or "from" not in step or "description" not in step:
+                raise ValueError(f"invalid step at index {i}")
+        if not steps and open_steps_empty:
+            raise ValueError("steps must not be empty when open_steps is empty")
+        steps = steps[:max_steps]
+        if not steps:
+            return "noop", None
+        return "steps", {"steps": steps}
+
+    # Check for step_updates
+    step_updates = data.get("step_updates")
+    if step_updates is not None:
+        if not isinstance(step_updates, list):
+            raise ValueError("step_updates must be an array")
+        return "step_updates", {"step_updates": step_updates}
+
+    # Check for sub_goals
+    sub_goals = data.get("sub_goals")
+    if sub_goals is not None:
+        if not isinstance(sub_goals, list):
+            raise ValueError("sub_goals must be an array")
+        return "sub_goals", {"sub_goals": sub_goals}
+
+    if open_steps_empty:
+        raise ValueError("steps is required when open_steps is empty")
+    return "noop", None
+
+
+# ── Execute payload validation ─────────────────────────────────────────
+
+def validate_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    accepted, data = _unwrap_wrapped_payload(payload)
+    if accepted is False:
+        return "rejected", None
+    if accepted is None:
+        if not isinstance(payload, dict):
+            raise ValueError("accepted must be true or false")
+        data = payload
+
+    if not isinstance(data, dict):
+        raise ValueError("accepted must be true or false")
+
+    description = data.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError("description is required")
+
+    result = {"description": description.strip()}
+
+    finding = data.get("finding")
+    if finding is not None:
+        if not isinstance(finding, dict):
+            raise ValueError("finding must be an object")
+        if "title" not in finding or "severity" not in finding:
+            raise ValueError("finding must have title and severity")
+        result["finding"] = finding
+
+    return "fact", result
+
+
+# ── Legacy payload validation (backward compat) ────────────────────────
+
 def _is_dict(value: Any) -> bool:
     return isinstance(value, dict)
 
@@ -73,7 +165,6 @@ def validate_reason_payload(
         raise ValueError("accepted must be true or false")
     complete = data.get("complete")
     intents = data.get("intents")
-    # backward compat: accept singular "intent" key from LLMs
     if intents is None:
         singular = data.get("intent")
         if isinstance(singular, dict):
@@ -111,14 +202,12 @@ def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, di
         data = payload
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
-
     fact = data.get("fact")
     if not isinstance(fact, dict):
         raise ValueError("fact is required")
     fact_description = fact.get("description")
     if not isinstance(fact_description, str) or not fact_description.strip():
         raise ValueError("fact.description is required")
-
     result = {"fact_description": fact_description.strip()}
     complete = data.get("complete")
     if complete is None:

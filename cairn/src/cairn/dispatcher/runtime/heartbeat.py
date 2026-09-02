@@ -40,6 +40,24 @@ class HeartbeatLease:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     @classmethod
+    def for_step(cls, client, project_id, step_id, worker_name, interval):
+        return cls(
+            heartbeat=lambda: client.step_heartbeat(project_id, step_id, worker_name),
+            scope=f"project={project_id} step={step_id}",
+            worker_name=worker_name,
+            interval=interval,
+        )
+
+    @classmethod
+    def for_decide(cls, client, project_id, worker_name, interval):
+        return cls(
+            heartbeat=lambda: client.decide_heartbeat(project_id, worker_name),
+            scope=f"project={project_id} decide",
+            worker_name=worker_name,
+            interval=interval,
+        )
+
+    @classmethod
     def for_intent(
         cls,
         client: CairnClient,

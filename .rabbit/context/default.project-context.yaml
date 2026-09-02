@@ -9,6 +9,14 @@ authorization:
   environment_type: lab-or-authorized-production-like
 
 scope:
+  restrict_to_origin_targets: true
+  allow_loopback_targets: false
+  allow_private_targets: false
+  allow_link_local_targets: false
+  blocked_hosts:
+    - localhost
+    - host.docker.internal
+    - gateway.docker.internal
   allowed_actions:
     - analyze
     - verify

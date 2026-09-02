@@ -32,7 +32,7 @@ def _create_scoped_project(client: TestClient) -> dict:
     return response.json()
 
 
-def test_scope_guard_rejects_out_of_scope_intent_creation(temp_db):
+def test_scope_text_does_not_reject_intent_evidence_at_api_boundary(temp_db):
     client = TestClient(_app())
     project = _create_scoped_project(client)
     project_id = project["project"]["id"]
@@ -47,11 +47,46 @@ def test_scope_guard_rejects_out_of_scope_intent_creation(temp_db):
         },
     )
 
-    assert response.status_code == 422
-    assert "scope_violation" in response.text
+    assert response.status_code == 201
 
 
-def test_scope_guard_converts_out_of_scope_conclusion_into_blocked_fact(temp_db):
+def test_scope_text_does_not_block_newly_reported_targets_at_api_boundary(temp_db):
+    client = TestClient(_app())
+    response = client.post(
+        "/projects",
+        json={
+            "title": "Strict by default",
+            "origin": "http://10.102.35.135/ http://10.102.35.134/",
+            "goal": "验证声明目标",
+        },
+    )
+    assert response.status_code == 201
+    project_id = response.json()["project"]["id"]
+
+    blocked = client.post(
+        f"/projects/{project_id}/intents",
+        json={
+            "from": ["origin"],
+            "description": "继续探测 127.0.0.1:8000 和 10.102.35.200",
+            "creator": "worker-1",
+            "worker": None,
+        },
+    )
+    assert blocked.status_code == 201
+
+    allowed = client.post(
+        f"/projects/{project_id}/intents",
+        json={
+            "from": ["origin"],
+            "description": "继续验证 10.102.35.135 的 HTTP 服务",
+            "creator": "worker-1",
+            "worker": None,
+        },
+    )
+    assert allowed.status_code == 201
+
+
+def test_scope_guard_preserves_conclusion_evidence(temp_db):
     client = TestClient(_app())
     project = _create_scoped_project(client)
     project_id = project["project"]["id"]
@@ -79,9 +114,7 @@ def test_scope_guard_converts_out_of_scope_conclusion_into_blocked_fact(temp_db)
     assert conclude_response.status_code == 200
     blocked_fact = conclude_response.json()["fact"]
     fact_description = blocked_fact["description"]
-    assert "范围策略阻断" in fact_description
-    assert "127.0.0.1" not in fact_description
-    assert "宿主机服务" not in fact_description
+    assert fact_description == "通过 202.194.20.64:80 可进一步访问 127.0.0.1:3000 宿主机服务。"
 
     follow_up_response = client.post(
         f"/projects/{project_id}/intents",
@@ -92,11 +125,10 @@ def test_scope_guard_converts_out_of_scope_conclusion_into_blocked_fact(temp_db)
             "worker": None,
         },
     )
-    assert follow_up_response.status_code == 422
-    assert "scope_blocked_source_fact" in follow_up_response.text
+    assert follow_up_response.status_code == 201
 
 
-def test_scope_guard_rejects_out_of_scope_completion(temp_db):
+def test_scope_text_does_not_reject_completion_evidence(temp_db):
     client = TestClient(_app())
     project = _create_scoped_project(client)
     project_id = project["project"]["id"]
@@ -110,5 +142,4 @@ def test_scope_guard_rejects_out_of_scope_completion(temp_db):
         },
     )
 
-    assert response.status_code == 422
-    assert "scope_violation" in response.text
+    assert response.status_code == 200

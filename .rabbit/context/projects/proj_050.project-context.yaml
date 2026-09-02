@@ -1,0 +1,11 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_050
+  target_summary: 120.221.158.123
+  goal: 获取到服务器的权限 执行whoami命令并返回结果
+  notes: ''
+override:
+  authorization: {}
+  scope: {}
+  output: {}

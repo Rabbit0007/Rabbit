@@ -521,15 +521,12 @@ def test_list_merges_same_cve_and_keeps_final_confirmation(client, temp_db):
     assert body[0]["fact_id"] == "f014"
     assert body[0]["related_fact_ids"] == ["f014"]
     assert "最终确认事实为 f014" not in body[0]["description"]
-    packet = body[0]["proof_packets"][0]
-    assert "/invoker/readonly" in packet["request"]
-    assert "Host: 127.0.0.1:60001" in packet["request"]
-    assert "uid=0" not in packet["request"]
-    assert "依据当前项目 p1" in packet["note"]
+    # A narrative fact is not silently presented as an original HTTP packet.
+    assert body[0]["proof_packets"] == []
 
 
-def test_proof_packet_reconstructs_sql_request_from_same_project_fact(client, temp_db):
-    """SQL proof uses the recorded endpoint instead of a fixed lab template."""
+def test_proof_packet_is_not_reconstructed_from_narrative_fact(client, temp_db):
+    """Narrative evidence must not be mislabeled as an original packet."""
     _insert_project("p1", "SQL Test")
     _insert_fact(
         "origin",
@@ -547,15 +544,11 @@ def test_proof_packet_reconstructs_sql_request_from_same_project_fact(client, te
     resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
 
     assert resp.status_code == 200
-    packet = resp.json()[0]["proof_packets"][0]
-    assert "GET /app/item?id=1" in packet["request"]
-    assert "Host: 10.20.30.40" in packet["request"]
-    assert "/sqli-labs/" not in packet["request"]
-    assert "p1" in packet["note"]
+    assert resp.json()[0]["proof_packets"] == []
 
 
-def test_proof_packets_keep_parameters_scoped_to_each_endpoint(client, temp_db):
-    """One fact's parameters are not copied onto a different endpoint."""
+def test_multiple_narrative_endpoints_do_not_create_fake_packets(client, temp_db):
+    """Several endpoint mentions still do not constitute an original packet."""
     _insert_project("p1", "API Test")
     _insert_fact("origin", "p1", "http://10.20.30.40/")
     _insert_fact(
@@ -571,16 +564,7 @@ def test_proof_packets_keep_parameters_scoped_to_each_endpoint(client, temp_db):
     resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
 
     assert resp.status_code == 200
-    packets = resp.json()[0]["proof_packets"]
-    requests = {packet["title"]: packet["request"] for packet in packets}
-    status_request = next(
-        request for title, request in requests.items() if "getStatusJson" in title
-    )
-    keeper_request = next(
-        request for title, request in requests.items() if "loginKeeper" in title
-    )
-    assert "statusName=systemDiskStatus" in status_request
-    assert "statusName=systemDiskStatus" not in keeper_request
+    assert resp.json()[0]["proof_packets"] == []
 
 
 def test_batch_status_update_marks_multiple_merged_vulnerabilities(client, temp_db):
@@ -896,8 +880,8 @@ def test_export_default_format_is_json(client, populated):
 # ---------------------------------------------------------------------------
 
 
-def test_refresh_rescans_and_returns_summary(client, temp_db):
-    """POST /refresh re-scans facts and returns the updated summary."""
+def test_refresh_wakes_report_agent_without_rule_scanning(client, temp_db, monkeypatch):
+    """Refresh queues the model agent and never falls back to keyword rules."""
     _insert_project("p1", "Alpha")
     _insert_fact("f1", "p1", CRITICAL_DESC)
     _insert_fact("f2", "p1", HIGH_DESC)
@@ -905,14 +889,17 @@ def test_refresh_rescans_and_returns_summary(client, temp_db):
     # Nothing scanned yet.
     assert _count_vulns() == 0
 
+    called = []
+    monkeypatch.setattr("cairn.server.routers.vulnerabilities.request_report_sync", lambda: called.append(True))
     resp = client.post("/api/vulnerabilities/refresh")
     assert resp.status_code == 200
-    assert resp.json() == {"critical": 1, "high": 1, "medium": 0, "low": 0}
-    assert _count_vulns() == 2
+    assert called == [True]
+    assert resp.json() == {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    assert _count_vulns() == 0
 
 
-def test_refresh_picks_up_new_facts(client, temp_db):
-    """A second refresh reflects facts added after the first scan."""
+def test_refresh_does_not_materialize_new_facts_with_default_rules(client, temp_db):
+    """New facts remain for the independent model agent to analyze."""
     _insert_project("p1", "Alpha")
     _insert_fact("f1", "p1", CRITICAL_DESC)
     client.post("/api/vulnerabilities/refresh")
@@ -920,4 +907,4 @@ def test_refresh_picks_up_new_facts(client, temp_db):
     _insert_fact("f2", "p1", MEDIUM_DESC)
     resp = client.post("/api/vulnerabilities/refresh")
     assert resp.status_code == 200
-    assert resp.json() == {"critical": 1, "high": 0, "medium": 1, "low": 0}
+    assert resp.json() == {"critical": 0, "high": 0, "medium": 0, "low": 0}

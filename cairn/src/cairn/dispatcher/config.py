@@ -12,9 +12,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TaskType = Literal["reason", "explore", "bootstrap"]
+TaskType = Literal["decide", "execute", "reason", "explore", "bootstrap"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 CompletedAction = Literal["remove", "stop"]
+WorkerHealthcheckMode = Literal["startup_and_task", "startup_only", "disabled"]
+ExecutionMode = Literal["container", "local"]
+LocalCompletedAction = Literal["keep", "remove"]
 
 WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
     "claudecode": (
@@ -37,6 +40,9 @@ WORKER_ENV_KEYS: dict[WorkerType, tuple[str, ...]] = {
 }
 
 DEFAULT_PROMPT_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
+    "decide.md": ("{graph_yaml}", "{fact_ids}", "{open_steps}", "{max_steps}"),
+    "execute.md": ("{graph_yaml}", "{step_id}", "{step_description}"),
+    "execute_conclude.md": ("{graph_yaml}", "{step_id}", "{step_description}"),
     "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}", "{project_context}", "{scope_policy}", "{user_assertions}"),
     "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{project_context}", "{scope_policy}", "{user_assertions}"),
     "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{project_context}", "{scope_policy}", "{user_assertions}"),
@@ -46,6 +52,9 @@ DEFAULT_PROMPT_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
 
 PROMPT_REQUIRED_TOKENS_BY_GROUP: dict[str, dict[str, tuple[str, ...]]] = {
     "mock": {
+        "decide.md": ("{fact_ids}", "{open_steps}", "{max_steps}"),
+        "execute.md": ("{step_id}",),
+        "execute_conclude.md": ("{step_id}",),
         "reason.md": ("{fact_ids}", "{open_intents}", "{max_intents}", "{project_context}", "{scope_policy}", "{user_assertions}"),
         "explore.md": ("{intent_id}", "{project_context}", "{scope_policy}", "{user_assertions}"),
         "explore_conclude.md": ("{intent_id}", "{project_context}", "{scope_policy}", "{user_assertions}"),
@@ -55,6 +64,9 @@ PROMPT_REQUIRED_TOKENS_BY_GROUP: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 MOCK_ALLOWED_OUTCOMES: dict[str, frozenset[str]] = {
+    "decide": frozenset({"complete", "steps", "noop", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
+    "execute": frozenset({"fact", "fact_with_finding", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
+    "execute_conclude": frozenset({"fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
     "healthcheck": frozenset({"ok", "fail"}),
     "reason": frozenset({"complete", "intent", "noop", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
     "explore_execute": frozenset({"fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
@@ -64,6 +76,18 @@ MOCK_ALLOWED_OUTCOMES: dict[str, frozenset[str]] = {
 }
 
 MOCK_DEFAULT_BEHAVIOR: dict[str, dict[str, Any]] = {
+    "decide": {
+        "delay": [0.05, 0.3],
+        "outcomes": {"complete": "0.0", "steps": "1.0", "noop": "0.0", "rejected": "0.0", "invalid_json": "0.0", "invalid_payload": "0.0", "command_fail": "0.0"},
+    },
+    "execute": {
+        "delay": [0.05, 0.3],
+        "outcomes": {"fact": "1.0", "fact_with_finding": "0.0", "rejected": "0.0", "invalid_json": "0.0", "invalid_payload": "0.0", "command_fail": "0.0"},
+    },
+    "execute_conclude": {
+        "delay": [0.05, 0.3],
+        "outcomes": {"fact": "1.0", "rejected": "0.0", "invalid_json": "0.0", "invalid_payload": "0.0", "command_fail": "0.0"},
+    },
     "healthcheck": {
         "delay": [0.05, 0.15],
         "outcomes": {"ok": "1.0", "fail": "0.0"},
@@ -138,15 +162,32 @@ class ExploreTaskConfig(BaseModel):
     conclude_timeout: int = Field(gt=0)
 
 
+class DecideTaskConfig(BaseModel):
+    timeout: int = Field(gt=0)
+    max_steps: int = Field(gt=0, default=3)
+
+
+class ExecuteTaskConfig(BaseModel):
+    timeout: int = Field(gt=0)
+    conclude_timeout: int = Field(gt=0)
+
+
 class BootstrapTaskConfig(BaseModel):
     timeout: int = Field(gt=0)
     conclude_timeout: int = Field(gt=0)
 
 
 class TasksConfig(BaseModel):
-    bootstrap: BootstrapTaskConfig
-    reason: ReasonTaskConfig
-    explore: ExploreTaskConfig
+    decide: DecideTaskConfig | None = None
+    execute: ExecuteTaskConfig | None = None
+    bootstrap: BootstrapTaskConfig | None = None
+    reason: ReasonTaskConfig | None = None
+    explore: ExploreTaskConfig | None = None
+
+
+class LocalConfig(BaseModel):
+    workspace_root: str | None = None
+    completed_action: LocalCompletedAction = "keep"
 
 
 class ContainerConfig(BaseModel):
@@ -160,6 +201,9 @@ class ContainerConfig(BaseModel):
 
 class RuntimeConfig(BaseModel):
     max_workers: int = Field(gt=0)
+    worker_healthcheck: WorkerHealthcheckMode = "startup_only"
+    execution: ExecutionMode = "container"
+    prompt_group: str = Field(min_length=1, default="default")
     max_running_projects: int = Field(gt=0)
     max_project_workers: int = Field(gt=0)
     interval: int = Field(gt=0)

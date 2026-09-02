@@ -180,7 +180,17 @@ def _build_template_report(
     observed = _observed_result(vulnerability, context)
     root_cause = _root_cause(vuln_type, full_text)
     impact = _impact_statement(vuln_type, vulnerability, observed)
-    proof_points = _verification_evidence(vulnerability, context, observed)
+    proof_points = _proof_points(
+        front_entry=front_entry,
+        backend_entry=backend_entry,
+        param_names=param_names,
+        root_cause=root_cause,
+        observed=observed,
+        impact=impact,
+    )
+    for point in _verification_evidence(vulnerability, context, observed):
+        if not any(existing.label == point.label and existing.content == point.content for existing in proof_points):
+            proof_points.append(point)
     attack_surface = _attack_surface(front_entry, backend_entry, param_names, context.origin)
     evidence_highlights = _evidence_highlights(vulnerability, context)
     remediation = _remediation(vuln_type)
@@ -247,32 +257,27 @@ def _compose_with_model(
         "你是渗透测试报告整理助手, 服务于授权安全测试/CTF 靶场场景。"
         " 用户只想要一份能照着复现漏洞的简洁报告, 不要套话、不要复述过程事实。"
         " 严格只使用输入中已经出现的证据, 不得编造接口、参数、URL、响应内容或因果链。"
-        " 报告面向授权测试人员复现使用, 需要输出可复现的利用脚本 (Python3),"
-        " 脚本只针对输入中已确认的目标和已验证的 payload, 不扩展到未验证攻击面。"
         " 返回一个 JSON 对象, 不要加 Markdown 代码块, 不要输出额外说明。"
     )
     user = (
         "基于下面的已确认漏洞材料, 生成一份可复现的漏洞报告。"
-        " 目标是: 看到报告的人能照着脚本重现攻击并验证成功。"
         " 只能返回这些字段："
         ' executive_summary (字符串: 一行结果摘要, 写明攻击点/权限/验证URL), '
-        ' vulnerability_proof (字符串: 漏洞链, 用 1. 2. 3. 编号的复现步骤, 每步一个动作), '
+        ' vulnerability_proof (字符串: 复现步骤, 用 1. 2. 3. 编号, 每步一个动作, 要具体到入口/payload/URL), '
         ' proof_points (对象数组, 每个含 label 和 content: 一条验证证据, content 写"动作 → 返回内容"), '
         ' attack_surface (字符串数组: 入口/命中接口/关键参数, 只列真实出现过的), '
         ' impact (字符串: 一句影响结论), '
         ' root_cause (字符串: 一句根因), '
         ' remediation (字符串数组: 修复建议, 1-3条), '
-        ' operator_notes (字符串数组: 复测注意事项, 比如非原始抓包), '
-        ' exploit_script (字符串: 一个完整的可复现 Python3 脚本, 用 ```python 代码块包裹, '
-        '   脚本里要含: (1) 顶部注释写明用法和参数, '
-        '   (2) 用 input 中出现的真实 payload/URL/参数构造攻击, '
-        '   (3) 提交攻击到目标, (4) 访问验证 URL 检查回显, '
-        '   (5) 打印预期输出内容作为成功标志).'
+        ' operator_notes (字符串数组: 复测注意事项). '
+        ' exploit_script (字符串: 仅当漏洞类型属于"命令注入/RCE/文件上传/SQL注入/反序列化"等'
+        '有明确攻击动作的漏洞时才生成; 信息泄露/未授权访问/路径穿越/XSS/SSRF 等只靠验证步骤即可复现的, '
+        '返回空字符串不生成脚本). '
+        '当生成脚本时, 用 ```python 代码块包裹, 含: (1) 顶部注释写明用法, '
+        '(2) 用真实 payload/URL 构造攻击, (3) 提交并验证回显, (4) 打印预期输出. '
         " 如果某个字段没有真实素材, 就返回空数组或空字符串, 不要编造。"
         " executive_summary 不要写'已整理出报告草稿'这种话, 直接给结果。"
         " vulnerability_proof 的步骤要具体: 访问哪个入口、构造什么 payload、提交到哪、访问哪个 URL 验证。"
-        " exploit_script 必须基于已确认的真实 payload 和 URL, 不要编造目标地址或参数名。"
-        " 脚本要能直接 python3 运行, 不依赖项目内部模块。"
         "\n\n上下文：\n"
         + json.dumps(prompt_payload, ensure_ascii=False, separators=(",", ":"))
     )
@@ -330,8 +335,11 @@ def _request_model_json(
     system: str,
     user: str,
     profile: _ComposerProfile,
+    raise_errors: bool = False,
 ) -> str | None:
     if profile.provider_api != "openai-completions":
+        if raise_errors:
+            raise RuntimeError(f"报告 Agent 不支持当前接口类型：{profile.provider_api}")
         return None
     endpoint = profile.base_url.rstrip("/")
     if not endpoint.endswith("/chat/completions"):
@@ -362,8 +370,25 @@ def _request_model_json(
             timeout=_REPORT_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
+    except requests.HTTPError as exc:
+        if raise_errors:
+            status = exc.response.status_code if exc.response is not None else "未知"
+            raise RuntimeError(f"报告 Agent 接口返回 HTTP {status}") from exc
+        return None
+    except requests.RequestException as exc:
+        if raise_errors:
+            raise RuntimeError(f"报告 Agent 接口连接失败：{exc.__class__.__name__}") from exc
+        return None
+    except Exception as exc:
+        if raise_errors:
+            raise RuntimeError(f"报告 Agent 调用失败：{exc.__class__.__name__}") from exc
+        return None
+
+    try:
         body = response.json()
-    except Exception:
+    except ValueError as exc:
+        if raise_errors:
+            raise RuntimeError("报告 Agent 接口返回的不是有效 JSON") from exc
         return None
 
     # Parse the OpenAI-style chat completion response. This previously lived
@@ -374,18 +399,27 @@ def _request_model_json(
         choices = body.get("choices") or []
         message = choices[0].get("message") or {}
         content = message.get("content")
-    except Exception:
+    except Exception as exc:
+        if raise_errors:
+            raise RuntimeError("报告 Agent 响应缺少有效的 choices/message 结构") from exc
         return None
 
     if isinstance(content, str):
-        return content.strip() or None
+        result = content.strip() or None
+        if result is None and raise_errors:
+            raise RuntimeError("报告 Agent 返回内容为空")
+        return result
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
             if isinstance(item, dict) and isinstance(item.get("text"), str):
                 parts.append(item["text"])
         text = "\n".join(parts).strip()
+        if not text and raise_errors:
+            raise RuntimeError("报告 Agent 返回内容为空")
         return text or None
+    if raise_errors:
+        raise RuntimeError("报告 Agent 返回了不支持的内容格式")
     return None
 
 
@@ -715,13 +749,19 @@ def _attack_chain_steps(
     entry = backend_entry or front_entry
     if entry:
         steps.append(f"访问入口 {entry}")
+    if param_names:
+        steps.append(f"定位关键参数：{', '.join(param_names[:6])}")
     # 步骤2: 从 fact 里抓 payload (文件名/参数值含 shell 元字符)
     payloads = re.findall(
         r"[`'\"]?([A-Za-z0-9_./-]*[;|>`$][^'\"\s,；,)）]{0,80})[`'\"]?",
         text,
     )
     # 过滤掉太短或明显是路径的
-    payloads = [p for p in payloads if len(p) > 6 and ";" in p or ">" in p or "$(" in p or "|" in p][:3]
+    payloads = [
+        p
+        for p in payloads
+        if len(p) > 6 and any(marker in p for marker in (";", ">", "$(", "|"))
+    ][:3]
     seen_p = set()
     for p in payloads:
         p_clean = p.strip("'\"`")

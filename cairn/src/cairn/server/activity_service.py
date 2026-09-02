@@ -24,7 +24,7 @@ def record_audit(
     action: str,
     summary: str,
     *,
-    actor: str = "admin",
+    actor: str = "system",
     target_type: str | None = None,
     target_id: str | None = None,
     detail: str | None = None,
@@ -38,7 +38,7 @@ def record_audit(
                     (created_at, actor, action, target_type, target_id, summary, detail)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (_now(), actor or "admin", action, target_type, target_id, summary, detail),
+                (_now(), actor or "system", action, target_type, target_id, summary, detail),
             )
     except Exception:  # pragma: no cover - logging must not break the operation
         pass

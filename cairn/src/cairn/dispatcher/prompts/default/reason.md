@@ -29,6 +29,7 @@ If Goal has not been satisfied and no new intent should currently be proposed, r
 
 ## Rules
 - First determine whether the facts already satisfy Goal. If they do, `data.complete.from` must come from `Valid facts`, and `data.complete.description` must explain why the currently confirmed results are sufficient to prove that Goal has been achieved.
+- Never use `data.complete` to say that Goal is not achieved, evidence is insufficient, exploration is exhausted, or no open intents remain. If Goal is not achieved, either propose new intents or return empty `data` according to the rules below.
 - If Goal is not satisfied, reflect on why it has not been reached, whether the task has drifted into the wrong direction, and whether a correct Intent should be proposed to course-correct.
 - Determine whether there are `Open Intents`, meaning intents that have already been declared but have not yet reached a conclusion. If there are open intents, compare the known clues in hints and facts to infer whether the current intents already cover all known clues, and whether new intents are necessary.
 - If `Open Intents` is empty, you must propose new intents.

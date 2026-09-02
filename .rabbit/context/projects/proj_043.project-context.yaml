@@ -1,0 +1,11 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_043
+  target_summary: http://222.194.67.152
+  goal: 发现系统存在的漏洞,输出到报告中最终目标是获取到服务器权限
+  notes: ''
+override:
+  authorization: {}
+  scope: {}
+  output: {}

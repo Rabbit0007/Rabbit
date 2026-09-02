@@ -85,16 +85,15 @@ def _captcha_payload(client):
 
 
 # ---------------------------------------------------------------------------
-# Dispatcher-safe default: CAIRN_INTERNAL_TOKEN unset -> routers stay open
+# Secure default: CAIRN_INTERNAL_TOKEN unset -> routers stay closed
 # ---------------------------------------------------------------------------
 
 
-def test_internal_token_unset_protected_route_is_open(app_client, monkeypatch):
+def test_internal_token_unset_protected_route_is_closed(app_client, monkeypatch):
     monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
-    # No auth at all, yet the protected route must not 401 (open default).
+    # No auth at all: protected routes stay closed by default.
     response = app_client.get(PROTECTED_PATH)
-    assert response.status_code != 401
-    assert response.status_code == 200
+    assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------

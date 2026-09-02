@@ -17,7 +17,7 @@ from cairn.server.settings_models import (
     SettingsHealthSummary,
 )
 from cairn.server.settings_service import load_settings
-from cairn.server.routers.workers import _internal_url, _status_timeout
+from cairn.server.routers.workers import _internal_auth_kwargs, _internal_url, _status_timeout
 
 router = APIRouter(tags=["settings"])
 
@@ -62,7 +62,11 @@ def _fetch_dispatcher_snapshot() -> tuple[dict | None, str | None]:
         health = requests.get(_internal_url("/internal/health"), timeout=_status_timeout())
         if health.status_code != 200:
             return None, f"调度器健康检查返回 {health.status_code}"
-        response = requests.get(_internal_url("/internal/status"), timeout=_status_timeout())
+        response = requests.get(
+            _internal_url("/internal/status"),
+            timeout=_status_timeout(),
+            **_internal_auth_kwargs(),
+        )
         if response.status_code != 200:
             return None, f"调度器状态接口返回 {response.status_code}"
         payload = response.json()
@@ -338,4 +342,3 @@ def cleanup() -> SettingsCleanupResult:
         deleted={key: int(value or 0) for key, value in deleted.items()},
         summary=summary,
     )
-

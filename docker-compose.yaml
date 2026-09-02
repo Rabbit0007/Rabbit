@@ -3,6 +3,9 @@ name: rabbit-pentest
 networks:
   default:
     name: rabbit-pentest-net
+  worker:
+    name: rabbit-pentest-worker-net
+    internal: true
 
 services:
   pentest-server:
@@ -12,7 +15,7 @@ services:
     image: rabbit-pentest-app:latest
     container_name: rabbit-pentest-server
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./datas/cairn/:/root/.local/share/cairn/
       - ./dispatch.yaml:/cairn/dispatch.yaml:ro
@@ -25,6 +28,8 @@ services:
       CAIRN_DISPATCHER_INTERNAL_URL: "http://rabbit-pentest-dispatcher:8989"
       CAIRN_REPORT_COMPOSER_CONFIG_PATH: "/cairn/dispatch.yaml"
       CAIRN_PROJECT_CONTEXT_ROOT: "/cairn/.rabbit/context"
+      CAIRN_ALLOW_REGISTRATION: "0"
+      CAIRN_ENABLE_API_DOCS: "0"
       # Timeout (seconds) for the longer-running worker connectivity test and
       # config read/write proxy calls to the dispatcher internal API. Independent
       # of CAIRN_DISPATCHER_INTERNAL_TIMEOUT (status polling, default 2.0s).
@@ -35,7 +40,7 @@ services:
         - "CMD"
         - "python"
         - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/projects', timeout=5)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"
       interval: 10s
       timeout: 5s
       retries: 12
@@ -61,11 +66,39 @@ services:
       CAIRN_DISPATCHER_INTERNAL_HOST: "0.0.0.0"
       CAIRN_DISPATCHER_INTERNAL_PORT: "8989"
       CAIRN_PROJECT_CONTEXT_ROOT: "/cairn/.rabbit/context"
+      CAIRN_WORKER_EGRESS_PROXY_URL: ""
+      CAIRN_WORKER_EGRESS_PROXY_TOKEN: ""
     depends_on:
       pentest-server:
         condition: service_healthy
     restart: unless-stopped
     command: ["uv", "run", "cairn", "dispatch", "--config", "dispatch.yaml"]
+  pentest-egress-proxy:
+    image: rabbit-pentest-app:latest
+    pull_policy: never
+    container_name: rabbit-pentest-egress-proxy
+    networks:
+      - default
+      - worker
+    volumes:
+      - ./.rabbit/context:/scope:ro
+    env_file:
+      - .env
+    environment:
+      CAIRN_PROJECT_CONTEXT_ROOT: "/scope"
+      CAIRN_EGRESS_PROVIDER_ENDPOINTS: "vip.luminai.cc:443,vsllm.com:443,xplt.sdu.edu.cn:4000,api.deepseek.com:443"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import socket; socket.create_connection(('127.0.0.1', 18888), timeout=3).close()"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 2s
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "cairn.egress_proxy", "--context-root", "/scope"]
 
 volumes:
   rabbit-pentest-artifacts:

@@ -222,17 +222,8 @@ def require_auth(request: Request, response: Response) -> sqlite3.Row:
     # mechanism that lets us protect the browser UI without breaking the
     # dispatcher's cookieless HTTP calls.
     #
-    # Dispatcher-safe default: if CAIRN_INTERNAL_TOKEN is not configured, the
-    # existing (cookieless) dispatcher and any current deployment must keep
-    # working unchanged. In that case we do not enforce auth on these routers and
-    # allow the request through, preserving pre-auth behaviour. Configuring the
-    # env var is an explicit opt-in to enforcement.
-    if _configured_internal_token() is None:
-        # No internal token configured: do not break the dispatcher or existing
-        # deployments. Allow through without injecting a user (no session).
-        return None  # type: ignore[return-value]
     if _has_valid_internal_token(request):
-        # Trusted machine client (e.g. dispatcher) presenting the shared secret.
+        request.state.auth_kind = "internal"
         return None  # type: ignore[return-value]
 
     token = request.cookies.get(SESSION_COOKIE_NAME)
@@ -295,4 +286,5 @@ def require_auth(request: Request, response: Response) -> sqlite3.Row:
         "username": user_row["username"],
         "created_at": user_row["created_at"],
     }
+    request.state.auth_kind = "session"
     return user_row

@@ -4,178 +4,126 @@ runtime:
   max_running_projects: 3
   max_project_workers: 2
   interval: 3
-  healthcheck_timeout: 20
+  healthcheck_timeout: 60
   prompt_group: default
 tasks:
-  bootstrap:
+  decide:
     timeout: 300
-    conclude_timeout: 90
-  reason:
-    timeout: 300
-    max_intents: 2
-  explore:
+    max_steps: 3
+  execute:
     timeout: 300
     conclude_timeout: 90
 container:
-  image: ghcr.io/oritera/cairn-worker-container:latest
+  image: ghcr.io/oritera/cairn-worker-container@sha256:d90d40b7c634b8d5dc9464e04b863a185b9efe964ffd2b246f6e5cbc2a2ef053
   network_mode: host
   completed_action: stop
   cap_add: []
-  name_prefix: cairn-021-dispatch-
+  name_prefix: rabbit-pentest-dispatch-
+  startup_name_prefix: rabbit-pentest-startup-healthcheck-
   extra_hosts:
-    api.deepseek.com: 192.168.65.254
+    host.docker.internal: 127.0.0.1
+    gateway.docker.internal: 127.0.0.1
+    docker.for.mac.host.internal: 127.0.0.1
 common_env:
   TSEC_SERVER_HOST: 10.0.0.44:8000
   TSEC_AGENT_TOKEN: xxx
 workers:
-- name: codex_gpt-5.5_1
-  type: codex
+- name: pi_deepseek-v4-pro_1
+  type: pi
   enabled: false
   task_types:
-  - bootstrap
-  - reason
-  - explore
+  - decide
+  - execute
+  max_running: 1
+  priority: 0
+  env:
+    TSEC_SERVER_HOST: 10.0.0.44:8000
+    TSEC_AGENT_TOKEN: xxx
+    PI_MODEL: deepseek-v4-pro
+    PI_BASE_URL: https://api.deepseek.com/v1
+    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_PROVIDER_API: openai-completions
+- name: pi_deepseek-v4-pro_2
+  type: pi
+  enabled: false
+  task_types:
+  - decide
+  - execute
+  max_running: 1
+  priority: 1
+  env:
+    TSEC_SERVER_HOST: 10.0.0.44:8000
+    TSEC_AGENT_TOKEN: xxx
+    PI_MODEL: deepseek-v4-pro
+    PI_BASE_URL: https://api.deepseek.com/v1
+    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_PROVIDER_API: openai-completions
+- name: pi_deepseek-v4-pro_3
+  type: pi
+  enabled: false
+  task_types:
+  - decide
+  - execute
+  max_running: 1
+  priority: 2
+  env:
+    TSEC_SERVER_HOST: 10.0.0.44:8000
+    TSEC_AGENT_TOKEN: xxx
+    PI_MODEL: deepseek-v4-pro
+    PI_BASE_URL: https://api.deepseek.com/v1
+    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_PROVIDER_API: openai-completions
+- name: chat-gpt-5.4-1
+  type: pi
+  enabled: false
+  task_types:
+  - decide
+  - execute
   max_running: 2
   priority: 0
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    CODEX_MODEL: gpt-5.5
-    CODEX_BASE_URL: https://vsllm.com/v1
-    OPENAI_API_KEY: ${OPENAI_API_KEY_CODEX}
-- name: codex_gpt-5.5_2
-  type: codex
+    PI_MODEL: gpt-5.4
+    PI_BASE_URL: https://vip.luminai.cc/v1
+    PI_API_KEY: ${OPENAI_API_KEY_LUMINAI}
+    PI_PROVIDER_API: openai-completions
+- name: chat-gpt-5.4-2
+  type: pi
   enabled: false
   task_types:
-  - bootstrap
-  - reason
-  - explore
+  - decide
+  - execute
   max_running: 2
   priority: 0
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    CODEX_MODEL: gpt-5.5
-    CODEX_BASE_URL: https://vsllm.com/v1
-    OPENAI_API_KEY: ${OPENAI_API_KEY_CODEX}
-- name: codex_gpt-5.5_3
-  type: codex
+    PI_MODEL: gpt-5.4
+    PI_BASE_URL: https://vip.luminai.cc/v1
+    PI_API_KEY: ${OPENAI_API_KEY_LUMINAI}
+    PI_PROVIDER_API: openai-completions
+- name: chat-gpt-5.4-3
+  type: pi
   enabled: false
   task_types:
-  - bootstrap
-  - reason
-  - explore
+  - decide
+  - execute
   max_running: 2
   priority: 0
   env:
     TSEC_SERVER_HOST: 10.0.0.44:8000
     TSEC_AGENT_TOKEN: xxx
-    CODEX_MODEL: gpt-5.5
-    CODEX_BASE_URL: https://vsllm.com/v1
-    OPENAI_API_KEY: ${OPENAI_API_KEY_CODEX}
-- name: deepseek-v4-pro-1
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 6
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_DS_XPLT}
-    PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-2
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 7
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_DS_XPLT}
-    PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-3
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 8
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_DS_XPLT}
-    PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-4
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 9
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseek-v4-pro
-    PI_BASE_URL: https://api.deepseek.com:18443/v1
-    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
-    PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-5
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 10
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseek-v4-pro
-    PI_BASE_URL: https://api.deepseek.com:18443/v1
-    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
-    PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-6
-  type: pi
-  enabled: false
-  task_types:
-  - bootstrap
-  - reason
-  - explore
-  max_running: 1
-  priority: 11
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseek-v4-pro
-    PI_BASE_URL: https://api.deepseek.com:18443/v1
-    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_MODEL: gpt-5.4
+    PI_BASE_URL: https://vip.luminai.cc/v1
+    PI_API_KEY: ${OPENAI_API_KEY_LUMINAI}
     PI_PROVIDER_API: openai-completions
 - name: glm-5.2-1
   type: pi
   enabled: true
   task_types:
-  - bootstrap
-  - reason
-  - explore
+  - decide
+  - execute
   max_running: 1
   priority: 12
   env:
@@ -183,15 +131,14 @@ workers:
     TSEC_AGENT_TOKEN: xxx
     PI_MODEL: Ali-dashscope/GLM-5.2
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_GLM}
+    PI_API_KEY: ${PI_API_KEY_GLM52}
     PI_PROVIDER_API: openai-completions
 - name: glm-5.2-2
   type: pi
   enabled: true
   task_types:
-  - bootstrap
-  - reason
-  - explore
+  - decide
+  - execute
   max_running: 1
   priority: 13
   env:
@@ -199,15 +146,14 @@ workers:
     TSEC_AGENT_TOKEN: xxx
     PI_MODEL: Ali-dashscope/GLM-5.2
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_GLM}
+    PI_API_KEY: ${PI_API_KEY_GLM52}
     PI_PROVIDER_API: openai-completions
 - name: glm-5.2-3
   type: pi
   enabled: true
   task_types:
-  - bootstrap
-  - reason
-  - explore
+  - decide
+  - execute
   max_running: 1
   priority: 14
   env:
@@ -215,5 +161,5 @@ workers:
     TSEC_AGENT_TOKEN: xxx
     PI_MODEL: Ali-dashscope/GLM-5.2
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_GLM}
+    PI_API_KEY: ${PI_API_KEY_GLM52}
     PI_PROVIDER_API: openai-completions

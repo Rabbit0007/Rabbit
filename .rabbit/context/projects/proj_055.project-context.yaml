@@ -1,0 +1,11 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+project:
+  project_id: proj_055
+  target_summary: https://license.jxjinlan.xyz/login
+  goal: 获取到服务器权限或者成功登录系统
+  notes: ''
+override:
+  authorization: {}
+  scope: {}
+  output: {}
