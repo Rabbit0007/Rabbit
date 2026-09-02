@@ -57,9 +57,26 @@ def validate_decide_payload(
         if not steps and open_steps_empty:
             raise ValueError("steps must not be empty when open_steps is empty")
         steps = steps[:max_steps]
-        if not steps:
-            return "noop", None
-        return "steps", {"steps": steps}
+
+    # Check for findings (Cairn_Y addition)
+    findings = data.get("findings")
+    if findings is not None:
+        if not isinstance(findings, list):
+            raise ValueError("findings must be an array")
+        for i, finding in enumerate(findings):
+            if not isinstance(finding, dict):
+                raise ValueError(f"invalid finding at index {i}")
+            if "title" not in finding or "description" not in finding or "severity" not in finding:
+                raise ValueError(f"finding at index {i} must have title, description, and severity")
+
+    # Return based on what we have
+    if steps or findings:
+        result = {}
+        if steps:
+            result["steps"] = steps
+        if findings:
+            result["findings"] = findings
+        return "steps", result
 
     # Check for step_updates
     step_updates = data.get("step_updates")
