@@ -100,7 +100,7 @@ PI_API_KEY_DEEPSEEK_V4=your-model-api-key
 默认 `dispatch.yaml` 使用：
 
 ```text
-Model: ByteDance-volcengine/DeepSeek-V4-Pro
+Model: ByteDance-volcengine/DeepSeek-V4-Flash-GA
 Base URL: https://xplt.sdu.edu.cn:4000/v1
 Provider API: openai-completions
 ```
@@ -141,10 +141,10 @@ docker compose down
 仓库默认注册 4 个同模型 Pi Worker：
 
 ```text
-deepseek-v4-pro-1
-deepseek-v4-pro-2
-deepseek-v4-pro-3
-deepseek-v4-pro-4
+deepseek-v4-flash-ga-1
+deepseek-v4-flash-ga-2
+deepseek-v4-flash-ga-3
+deepseek-v4-flash-ga-4
 ```
 
 默认调度约束：

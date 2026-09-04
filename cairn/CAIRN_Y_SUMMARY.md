@@ -113,7 +113,7 @@ rabbit-pentest-dispatcher
 rabbit-pentest-egress-proxy
 ```
 
-当前 Pi Worker：4 个，启动健康检查均为 HTTP 200。全局并发为 4，单项目执行并发为 3，同时只运行 1 个项目；第四个 Worker 提供调度和故障切换余量。
+当前 Pi Worker：4 个，统一使用 `ByteDance-volcengine/DeepSeek-V4-Flash-GA`，启动健康检查均为 HTTP 200。全局并发为 4，单项目执行并发为 3，同时只运行 1 个项目；第四个 Worker 提供调度和故障切换余量。
 
 `18000` 端口上的另一套 Cairn 服务与 Rabbit 独立，本次没有修改或重启。
 

@@ -136,10 +136,10 @@ Dispatcher 启动结果：
 
 ```text
 workers=4 parallelism=4
-deepseek-v4-pro-1 HTTP 200
-deepseek-v4-pro-2 HTTP 200
-deepseek-v4-pro-3 HTTP 200
-deepseek-v4-pro-4 HTTP 200
+deepseek-v4-flash-ga-1 HTTP 200
+deepseek-v4-flash-ga-2 HTTP 200
+deepseek-v4-flash-ga-3 HTTP 200
+deepseek-v4-flash-ga-4 HTTP 200
 healthy=4 unhealthy=0
 ```
 

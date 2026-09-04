@@ -28,7 +28,7 @@ common_env:
   TSEC_SERVER_HOST: 10.0.0.44:8000
   TSEC_AGENT_TOKEN: xxx
 workers:
-- name: deepseek-v4-pro-1
+- name: deepseek-v4-flash-ga-1
   type: pi
   enabled: true
   task_types:
@@ -37,11 +37,11 @@ workers:
   max_running: 1
   priority: 0
   env:
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Flash-GA
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
     PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-2
+- name: deepseek-v4-flash-ga-2
   type: pi
   enabled: true
   task_types:
@@ -50,11 +50,11 @@ workers:
   max_running: 1
   priority: 1
   env:
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Flash-GA
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
     PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-3
+- name: deepseek-v4-flash-ga-3
   type: pi
   enabled: true
   task_types:
@@ -63,11 +63,11 @@ workers:
   max_running: 1
   priority: 2
   env:
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Flash-GA
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
     PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
-- name: deepseek-v4-pro-4
+- name: deepseek-v4-flash-ga-4
   type: pi
   enabled: true
   task_types:
@@ -76,7 +76,7 @@ workers:
   max_running: 1
   priority: 3
   env:
-    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Flash-GA
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
     PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
