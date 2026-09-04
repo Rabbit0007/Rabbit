@@ -567,14 +567,14 @@ def _load_report_context(vulnerability: Vulnerability) -> _ReportContext:
             "SELECT id, description FROM facts WHERE project_id = ? ORDER BY rowid",
             (vulnerability.project_id,),
         ).fetchall()
-        intent_description = vulnerability.source_intent_description
-        if not intent_description and vulnerability.source_intent_id:
-            intent_row = conn.execute(
-                "SELECT description FROM intents WHERE project_id = ? AND id = ?",
+        step_description = vulnerability.source_intent_description
+        if not step_description and vulnerability.source_intent_id:
+            step_row = conn.execute(
+                "SELECT description FROM steps WHERE project_id = ? AND id = ?",
                 (vulnerability.project_id, vulnerability.source_intent_id),
             ).fetchone()
-            if intent_row:
-                intent_description = str(intent_row["description"] or "").strip()
+            if step_row:
+                step_description = str(step_row["description"] or "").strip()
 
     fact_by_id = {str(row["id"]): str(row["description"] or "").strip() for row in fact_rows}
     related_ids = _unique(
@@ -589,7 +589,7 @@ def _load_report_context(vulnerability: Vulnerability) -> _ReportContext:
         origin=fact_by_id.get("origin", ""),
         goal=fact_by_id.get("goal", ""),
         related_facts=related_facts,
-        source_intent_description=intent_description,
+        source_intent_description=step_description,
     )
 
 

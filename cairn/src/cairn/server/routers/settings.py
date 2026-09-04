@@ -105,15 +105,15 @@ def _idle_project_alerts(conn, threshold_hours: int) -> list[SettingsAlert]:
             p.id,
             p.title,
             p.created_at,
-            p.reason_last_heartbeat_at,
-            MAX(i.created_at) AS last_intent_created_at,
-            MAX(i.concluded_at) AS last_intent_concluded_at,
+            p.decide_last_heartbeat_at,
+            MAX(s.created_at) AS last_step_created_at,
+            MAX(s.concluded_at) AS last_step_concluded_at,
             MAX(h.created_at) AS last_hint_created_at
         FROM projects p
-        LEFT JOIN intents i ON i.project_id = p.id
+        LEFT JOIN steps s ON s.project_id = p.id
         LEFT JOIN hints h ON h.project_id = p.id
         WHERE p.status = 'active'
-        GROUP BY p.id, p.title, p.created_at, p.reason_last_heartbeat_at
+        GROUP BY p.id, p.title, p.created_at, p.decide_last_heartbeat_at
         ORDER BY p.created_at
         """
     ).fetchall()
@@ -125,9 +125,9 @@ def _idle_project_alerts(conn, threshold_hours: int) -> list[SettingsAlert]:
                 ts
                 for ts in (
                     row["created_at"],
-                    row["reason_last_heartbeat_at"],
-                    row["last_intent_created_at"],
-                    row["last_intent_concluded_at"],
+                    row["decide_last_heartbeat_at"],
+                    row["last_step_created_at"],
+                    row["last_step_concluded_at"],
                     row["last_hint_created_at"],
                 )
                 if ts

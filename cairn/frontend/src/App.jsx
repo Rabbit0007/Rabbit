@@ -1765,8 +1765,8 @@ function ProjectCard({ project, campaign, campaignLoading, onDelete, onStop, onS
       </div>
       <div className="project-stats">
         <MiniStat label="事实" value={project.fact_count} />
-        <MiniStat label="意图" value={project.intent_count} />
-        <MiniStat label="工作中" value={project.working_intent_count} />
+        <MiniStat label="步骤" value={project.step_count ?? project.intent_count} />
+        <MiniStat label="工作中" value={project.working_step_count ?? project.working_intent_count} />
       </div>
       <div className="project-meta-row">
         <div>
@@ -2008,7 +2008,7 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
   const facts = detail?.facts || [];
   const steps = detail?.steps || [];
   const selectedFactIds = selected?.type === "fact" ? [selected.id] : facts.length ? ["origin"] : [];
-  const selectedStep = selected?.type === "step" ? steps.find((intent) => step.id === selected.id) : null;
+  const selectedStep = selected?.type === "step" ? steps.find((step) => step.id === selected.id) : null;
 
   const updateTitle = () => {
     setModal("title");
@@ -2136,13 +2136,13 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
           <div className="graph-actions floating right">
             <button className="primary-outline compact" type="button" onClick={() => setModal("intent")}>
               <Plus size={16} />
-              意图
+              步骤
             </button>
             <button
               className="primary-outline compact success"
               type="button"
               onClick={() => setModal("conclude")}
-              disabled={!selectedIntent || selectedStep.to}
+              disabled={!selectedStep || selectedStep.to}
             >
               <CheckCircle2 size={16} />
               完成
@@ -2172,12 +2172,12 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
       </section>
       {modal === "intent" && (
         <IntentModal
-          title="新增探索意图"
+          title="新增执行步骤"
           fromIds={selectedFactIds}
           facts={facts}
           onClose={() => setModal(null)}
           onSubmit={async (payload) => {
-            await runAction("意图已创建", () =>
+            await runAction("步骤已创建", () =>
               apiRequest(`/projects/${project.id}/steps`, { method: "POST", body: payload }),
             );
             setModal(null);
@@ -2185,13 +2185,13 @@ function ProjectWorkspace({ projectId, runAction, setToast, confirmAction }) {
           }}
         />
       )}
-      {modal === "conclude" && selectedIntent && (
+      {modal === "conclude" && selectedStep && (
         <TextActionModal
-          title={`完成意图 ${selectedStep.id}`}
+          title={`完成步骤 ${selectedStep.id}`}
           label="产出事实"
           onClose={() => setModal(null)}
           onSubmit={async (description) => {
-            await runAction("意图已完成", () =>
+            await runAction("步骤已完成", () =>
               apiRequest(`/projects/${project.id}/steps/${selectedStep.id}/conclude`, {
                 method: "POST",
                 body: { worker: selectedStep.worker || HUMAN_WORKER, description },
@@ -2270,8 +2270,6 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   const cyRef = useRef(null);
 
   const elements = useMemo(() => {
-    const isBootstrapIntent = () => false; // bootstrap removed in Decide/Execute model
-
     const estimateLabelCharWidth = (char, fontSize) => {
       if (/\s/.test(char)) return fontSize * 0.35;
       if (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(char)) {
@@ -2316,11 +2314,10 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       };
     };
 
-    const factNodeSize = (label, nodeType) => {
-      const preset =
-        nodeType === "fact"
-          ? { fontSize: 10, maxTextWidth: 116, minWidth: 52, minHeight: 34, paddingX: 10, paddingY: 10 }
-          : { fontSize: 11, maxTextWidth: 92, minWidth: 58, minHeight: 38, paddingX: 10, paddingY: 10 };
+    const nodeSize = (label, nodeType) => {
+      const preset = nodeType === "fact"
+        ? { fontSize: 10, maxTextWidth: 116, minWidth: 52, minHeight: 34, paddingX: 10, paddingY: 10 }
+        : { fontSize: 10, maxTextWidth: 104, minWidth: 64, minHeight: 38, paddingX: 10, paddingY: 10 };
       const measured = measureWrappedText(label, preset.maxTextWidth, preset.fontSize);
       return {
         width: Math.max(preset.minWidth, Math.ceil(measured.width + preset.paddingX * 2)),
@@ -2328,31 +2325,18 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       };
     };
 
-    const summarizeFactLabel = (fact) => {
-      if (fact.id === "origin") return "Origin";
-      if (fact.id === "goal") return "Goal";
-      const normalized = String(fact.description || "").replace(/\s+/g, " ").trim();
+    const summarizeLabel = (item, fallback) => {
+      if (item.id === "origin") return "Origin";
+      const normalized = String(item.title || item.description || "").replace(/\s+/g, " ").trim();
       const chars = Array.from(normalized);
-      if (chars.length <= 24) return normalized || fact.id;
+      if (chars.length <= 24) return normalized || fallback || item.id;
       return `${chars.slice(0, 24).join("")}…`;
     };
 
-    const openIntentNodeType = (intent) => {
-      if (false) return step.worker ? "step_running" : "step_pending";
-      return step.worker ? "in_progress" : "unclaimed";
-    };
-
-    const openIntentNodeLabel = (intent) => (false ? "Bootstrap" : "?");
-
-    const openIntentNodeSize = (intent) => {
-      if (false) return { width: 82, height: 30 };
-      return { width: 22, height: 22 };
-    };
-
     const nodes = detail.facts.map((fact) => {
-      const nodeType = fact.id === "origin" ? "origin" : fact.id === "goal" ? "goal" : "fact";
-      const label = summarizeFactLabel(fact);
-      const size = factNodeSize(label, nodeType);
+      const nodeType = fact.id === "origin" ? "origin" : "fact";
+      const label = summarizeLabel(fact, fact.id);
+      const size = nodeSize(label, nodeType);
       return {
         data: {
           id: fact.id,
@@ -2365,67 +2349,48 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
       };
     });
 
+    for (const goal of detail.goals || []) {
+      const label = summarizeLabel(goal, goal.id);
+      const size = nodeSize(label, "goal");
+      nodes.push({ data: {
+        id: goal.id, label, description: goal.description, nodeType: "goal",
+        width: size.width, height: size.height, status: goal.status, sourceIds: goal.from || [],
+      } });
+    }
+    for (const step of detail.steps || []) {
+      const label = summarizeLabel(step, step.id);
+      const size = nodeSize(label, "step");
+      nodes.push({ data: {
+        id: step.id, label, description: step.description,
+        nodeType: step.abandoned ? "step_abandoned" : step.to ? "step_done" : step.worker ? "step_running" : "step_pending",
+        width: size.width, height: size.height, status: step.abandoned ? "abandoned" : step.to ? "concluded" : "open",
+        sourceIds: step.from || [],
+      } });
+    }
+    for (const finding of detail.findings || []) {
+      const label = summarizeLabel(finding, finding.id);
+      const size = nodeSize(label, "finding");
+      nodes.push({ data: {
+        id: finding.id, label, description: finding.description, nodeType: "finding",
+        width: size.width, height: size.height, severity: finding.severity,
+        sourceIds: finding.fact_id ? [finding.fact_id] : [],
+      } });
+    }
+
     const edges = [];
-    detail.steps.forEach((intent) => {
-      const label = step.description || "";
+    detail.steps.forEach((step) => {
       (step.from || []).forEach((source) => {
-        if (step.to) {
-          edges.push({
-            data: {
-              id: `${step.id}_${source}`,
-              source,
-              target: step.to,
-              stepId: step.id,
-              label,
-              status: "concluded",
-            },
-          });
-          return;
-        }
-
-        const phId = `_ph_${step.id}`;
-        if (!nodes.some((node) => node.data.id === phId)) {
-          const nodeType = openIntentNodeType(intent);
-          const nodeSize = openIntentNodeSize(intent);
-          nodes.push({
-            data: {
-              id: phId,
-              label: openIntentNodeLabel(intent),
-              description: step.description,
-              nodeType,
-              stepId: step.id,
-              width: nodeSize.width,
-              height: nodeSize.height,
-            },
-          });
-        }
-
-        edges.push({
-          data: {
-            id: `${step.id}_${source}`,
-            source,
-            target: phId,
-            stepId: step.id,
-            label,
-            status: openIntentNodeType(intent),
-          },
-        });
-      }
-      );
-
-      if (!step.to && false) {
-        edges.push({
-          data: {
-            id: `${step.id}_goal`,
-            source: `_ph_${step.id}`,
-            target: "goal",
-            stepId: step.id,
-            label: "",
-            status: openIntentNodeType(intent),
-            edgeType: "step_scope",
-          },
-        });
-      }
+        edges.push({ data: { id: `source:${source}:${step.id}`, source, target: step.id, status: "step_source" } });
+      });
+      if (step.to) edges.push({ data: { id: `result:${step.id}:${step.to}`, source: step.id, target: step.to, status: "step_result" } });
+      if (step.goal_id) edges.push({ data: { id: `scope:${step.id}:${step.goal_id}`, source: step.id, target: step.goal_id, status: "step_scope" } });
+    });
+    (detail.goals || []).forEach((goal) => {
+      if (goal.parent_goal_id) edges.push({ data: { id: `goal:${goal.parent_goal_id}:${goal.id}`, source: goal.parent_goal_id, target: goal.id, status: "goal_child" } });
+      (goal.from || []).forEach((factId) => edges.push({ data: { id: `goal-evidence:${factId}:${goal.id}`, source: factId, target: goal.id, status: "goal_evidence" } }));
+    });
+    (detail.findings || []).forEach((finding) => {
+      if (finding.fact_id) edges.push({ data: { id: `finding:${finding.fact_id}:${finding.id}`, source: finding.fact_id, target: finding.id, status: "finding" } });
     });
 
     return [...nodes, ...edges];
@@ -2536,17 +2501,11 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
 
   const initialPositionForNode = useCallback(
     (nodeData, previousPositions) => {
-      if (nodeData.stepId) {
-        const previousPlaceholder = previousPositions.get(nodeData.id);
-        if (previousPlaceholder) return previousPlaceholder;
-        const intent = detail.steps.find((item) => item.id === nodeData.stepId);
-        return intent ? anchorPositionFromIds(step.from, previousPositions, 32) : null;
+      if (nodeData.sourceIds?.length) {
+        return anchorPositionFromIds(nodeData.sourceIds, previousPositions, 40);
       }
-      const producingIntent = detail.steps.find((item) => item.to === nodeData.id);
-      if (!producingIntent) return null;
-      const placeholderPosition = previousPositions.get(`_ph_${producingIntent.id}`);
-      if (placeholderPosition) return placeholderPosition;
-      return anchorPositionFromIds(producingIntent.from, previousPositions, 44);
+      const producer = detail.steps.find((item) => item.to === nodeData.id);
+      return producer ? anchorPositionFromIds([producer.id], previousPositions, 44) : null;
     },
     [anchorPositionFromIds, detail.steps],
   );
@@ -2777,6 +2736,55 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
           },
         },
         {
+          selector: 'node[nodeType="step_done"]',
+          style: {
+            label: "data(label)", shape: "round-rectangle",
+            "background-color": "#059669", color: "#ecfdf5",
+            "font-family": "var(--sans)", "font-size": 10, "font-weight": "bold",
+            width: "data(width)", height: "data(height)", "border-width": 0,
+            "text-wrap": "wrap", "text-max-width": 104,
+            "text-valign": "center", "text-halign": "center",
+          },
+        },
+        {
+          selector: 'node[nodeType="step_abandoned"]',
+          style: {
+            label: "data(label)", shape: "round-rectangle",
+            "background-color": "#64748b", color: "#e2e8f0",
+            "font-family": "var(--sans)", "font-size": 10,
+            width: "data(width)", height: "data(height)",
+            "border-width": 1.5, "border-style": "dashed", "border-color": "#94a3b8",
+            "text-wrap": "wrap", "text-max-width": 104,
+            "text-valign": "center", "text-halign": "center",
+          },
+        },
+        {
+          selector: 'node[nodeType="finding"]',
+          style: {
+            label: "data(label)", shape: "diamond",
+            "background-color": "#8b5cf6", color: "#ffffff",
+            "font-family": "var(--sans)", "font-size": 10, "font-weight": "bold",
+            width: "data(width)", height: "data(height)", "border-width": 0,
+            "text-wrap": "wrap", "text-max-width": 104,
+            "text-valign": "center", "text-halign": "center",
+          },
+        },
+        {
+          selector: 'edge[status="step_source"], edge[status="step_result"], edge[status="step_scope"], edge[status="goal_child"], edge[status="goal_evidence"], edge[status="finding"]',
+          style: {
+            width: 1.8, "line-color": "#94a3b8", "target-arrow-color": "#94a3b8",
+            "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 0.8,
+          },
+        },
+        {
+          selector: 'edge[status="step_scope"], edge[status="goal_evidence"]',
+          style: { "line-style": "dashed", "line-color": "#fb7185", "target-arrow-color": "#fb7185" },
+        },
+        {
+          selector: 'edge[status="finding"]',
+          style: { "line-color": "#a78bfa", "target-arrow-color": "#a78bfa" },
+        },
+        {
           selector: 'edge[status="concluded"]',
           style: {
             width: 2,
@@ -2946,16 +2954,17 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
     cyRef.current = cy;
     cy.on("tap", "node", (event) => {
       const node = event.target;
-      const stepId = node.data("stepId");
-      if (stepId) {
-        onSelect({ type: "intent", id: stepId });
-        return;
-      }
-      onSelect({ type: "fact", id: node.id() });
+      const nodeType = String(node.data("nodeType") || "fact");
+      const type = nodeType.startsWith("step_") ? "step" : nodeType;
+      onSelect({ type, id: node.id() });
     });
     cy.on("tap", "edge", (event) => {
-      const stepId = event.target.data("stepId");
-      if (stepId) onSelect({ type: "intent", id: stepId });
+      const edge = event.target;
+      const status = edge.data("status");
+      if (status === "step_source") onSelect({ type: "step", id: edge.target().id() });
+      else if (status === "step_result" || status === "step_scope") onSelect({ type: "step", id: edge.source().id() });
+      else if (status === "finding") onSelect({ type: "finding", id: edge.target().id() });
+      else if (status === "goal_child" || status === "goal_evidence") onSelect({ type: "goal", id: edge.target().id() });
     });
     cy.on("tap", (event) => {
       if (event.target === cy) onSelect(null);
@@ -2994,84 +3003,17 @@ function GraphCanvas({ detail, selected, onSelect, layout }) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    const isBootstrapIntent = () => false; // bootstrap removed in Decide/Execute model
-
-    const collectIntentElements = (intent, nodeIds, edgeIds) => {
-      if (step.to) nodeIds.add(step.to);
-      else nodeIds.add(`_ph_${step.id}`);
-      for (const sourceId of step.from || []) {
-        nodeIds.add(sourceId);
-        edgeIds.add(`${step.id}_${sourceId}`);
-      }
-      if (false) {
-        nodeIds.add("goal");
-        edgeIds.add(`${step.id}_goal`);
-      }
-    };
-
-    const collectFactLineage = (factId) => {
-      const upstreamFacts = new Set();
-      const upstreamIntents = new Set();
-
-      const walkFactUpstream = (id) => {
-        if (upstreamFacts.has(id)) return;
-        upstreamFacts.add(id);
-        detail.steps.forEach((intent) => {
-          if (step.to === id) walkIntentUpstream(step.id);
-        });
-      };
-
-      const walkIntentUpstream = (stepId) => {
-        if (upstreamIntents.has(stepId)) return;
-        upstreamIntents.add(stepId);
-        const intent = detail.steps.find((item) => item.id === stepId);
-        if (!intent) return;
-        (step.from || []).forEach((sourceId) => walkFactUpstream(sourceId));
-      };
-
-      walkFactUpstream(factId);
-      return { upstreamFacts, upstreamIntents };
-    };
-
     cy.elements().removeClass("highlight focus faded selected-fact");
-
     if (!selected?.id) return;
-
-    if (selected.type === "step") {
-      const intent = detail.steps.find((item) => item.id === selected.id);
-      if (!intent) return;
-      const nodeIds = new Set();
-      const edgeIds = new Set();
-      collectIntentElements(intent, nodeIds, edgeIds);
-      const highlightNodes = cy.nodes().filter((node) => nodeIds.has(node.id()));
-      const focusEdges = cy.edges().filter((edge) => edgeIds.has(edge.id()));
-      highlightNodes.addClass("highlight");
-      focusEdges.addClass("focus");
-      const visible = highlightNodes.add(focusEdges);
-      cy.elements().not(visible).addClass("faded");
-      return;
-    }
-
-    if (selected.type === "fact") {
-      const { upstreamFacts, upstreamIntents } = collectFactLineage(selected.id);
-      const nodeIds = new Set(upstreamFacts);
-      const edgeIds = new Set();
-      upstreamIntents.forEach((stepId) => {
-        const intent = detail.steps.find((item) => item.id === stepId);
-        if (intent) collectIntentElements(intent, nodeIds, edgeIds);
-      });
-
-      const highlightNodes = cy.nodes().filter((node) => nodeIds.has(node.id()));
-      const highlightEdges = cy.edges().filter((edge) => edgeIds.has(edge.id()));
-      const focusNode = cy.getElementById(selected.id);
-
-      highlightNodes.addClass("highlight");
-      highlightEdges.addClass("highlight");
-      focusNode.addClass("focus selected-fact");
-
-      const visible = highlightNodes.add(highlightEdges).add(focusNode);
-      cy.elements().not(visible).addClass("faded");
-    }
+    const focusNode = cy.getElementById(selected.id);
+    if (!focusNode.length) return;
+    const connectedEdges = focusNode.connectedEdges();
+    const connectedNodes = connectedEdges.connectedNodes();
+    const visible = focusNode.add(connectedEdges).add(connectedNodes);
+    focusNode.addClass("focus selected-fact");
+    connectedEdges.addClass("highlight");
+    connectedNodes.addClass("highlight");
+    cy.elements().not(visible).addClass("faded");
   }, [detail, selected]);
 
   return <div className="graph-canvas" ref={containerRef} />;
@@ -3102,7 +3044,9 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
   const facts = detail.facts;
   const steps = detail.steps;
   const fact = selected?.type === "fact" ? facts.find((item) => item.id === selected.id) : null;
-  const intent = selected?.type === "step" ? steps.find((item) => item.id === selected.id) : null;
+  const step = selected?.type === "step" ? steps.find((item) => item.id === selected.id) : null;
+  const goal = selected?.type === "goal" ? (detail.goals || []).find((item) => item.id === selected.id) : null;
+  const finding = selected?.type === "finding" ? (detail.findings || []).find((item) => item.id === selected.id) : null;
   const tabs = [
     ["details", "详情", null],
     ["hints", "提示", detail.hints.length],
@@ -3110,9 +3054,9 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
     ["timeline", "时间线", timeline.length],
   ];
 
-  const claimIntent = async () => {
-    if (!intent) return;
-    await runAction("意图已认领", () =>
+  const claimStep = async () => {
+    if (!step) return;
+    await runAction("步骤已认领", () =>
       apiRequest(`/projects/${detail.project.id}/steps/${step.id}/heartbeat`, {
         method: "POST",
         body: { worker: HUMAN_WORKER },
@@ -3121,9 +3065,9 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
     onRefresh();
   };
 
-  const releaseIntent = async () => {
-    if (!intent) return;
-    await runAction("意图已释放", () =>
+  const releaseStep = async () => {
+    if (!step) return;
+    await runAction("步骤已释放", () =>
       apiRequest(`/projects/${detail.project.id}/steps/${step.id}/release`, {
         method: "POST",
         body: { worker: step.worker || HUMAN_WORKER },
@@ -3153,7 +3097,9 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
                   <p>{detail.project.id}</p>
                   <div className="detail-grid">
                     <MiniStat label="事实" value={facts.length} />
-                    <MiniStat label="意图" value={steps.length} />
+                    <MiniStat label="目标" value={(detail.goals || []).length} />
+                    <MiniStat label="步骤" value={steps.length} />
+                    <MiniStat label="发现" value={(detail.findings || []).length} />
                   </div>
                 </div>
                 <ProjectCampaignPanel campaign={campaign} />
@@ -3166,9 +3112,9 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
                 <p>{fact.description}</p>
               </div>
             )}
-            {intent && (
+            {step && (
               <div className="detail-card">
-                <span>意图</span>
+                <span>步骤</span>
                 <h3>{step.id}</h3>
                 <p>{step.description}</p>
                 <div className="detail-meta">
@@ -3180,18 +3126,43 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
                 {!step.to && (
                   <div className="button-row">
                     {!step.worker ? (
-                      <button className="primary-outline compact" type="button" onClick={claimIntent}>
+                      <button className="primary-outline compact" type="button" onClick={claimStep}>
                         <Activity size={16} />
                         认领
                       </button>
                     ) : (
-                      <button className="ghost-button compact" type="button" onClick={releaseIntent}>
+                      <button className="ghost-button compact" type="button" onClick={releaseStep}>
                         <Pause size={16} />
                         释放
                       </button>
                     )}
                   </div>
                 )}
+              </div>
+            )}
+            {goal && (
+              <div className="detail-card">
+                <span>目标</span>
+                <h3>{goal.id}</h3>
+                <p>{goal.description}</p>
+                <div className="detail-meta">
+                  <span>状态：{goal.status}</span>
+                  <span>父目标：{goal.parent_goal_id || "顶层目标"}</span>
+                  <span>完成证据：{(goal.from || []).join(", ") || "暂无"}</span>
+                </div>
+              </div>
+            )}
+            {finding && (
+              <div className="detail-card">
+                <span>发现</span>
+                <h3>{finding.title || finding.id}</h3>
+                <p>{finding.description}</p>
+                <div className="detail-meta">
+                  <span>ID：{finding.id}</span>
+                  <span>类型：{finding.kind}</span>
+                  <span>等级：{finding.severity}</span>
+                  <span>关联事实：{finding.fact_id || "暂无"}</span>
+                </div>
               </div>
             )}
           </>
@@ -3214,14 +3185,14 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
         )}
         {tab === "logs" && (
           <div className="timeline-list">
-            {intents.map((item) => (
+            {steps.map((item) => (
               <InspectorListItem
                 key={item.id}
                 title={item.id}
                 description={item.description}
                 meta={item.worker || item.creator}
                 onClick={() => {
-                  setSelected({ type: "intent", id: item.id });
+                  setSelected({ type: "step", id: item.id });
                   setTab("details");
                 }}
               />
@@ -3239,7 +3210,11 @@ function Inspector({ detail, campaign, selected, setSelected, tab, setTab, timel
                   title={event.event_type}
                   description={event.description}
                   meta={`${formatTime(event.timestamp)}${event.actor ? ` · ${event.actor}` : ""}`}
-                  onClick={() => event.node_id && setSelected({ type: event.node_id.startsWith("i") ? "intent" : "fact", id: event.node_id })}
+                  onClick={() => {
+                    if (!event.node_id) return;
+                    const prefix = event.node_id[0];
+                    setSelected({ type: prefix === "s" ? "step" : prefix === "g" ? "goal" : prefix === "v" ? "finding" : "fact", id: event.node_id });
+                  }}
                 />
               ))
             )}
@@ -3308,7 +3283,7 @@ function ProjectCampaignPanel({ campaign }) {
         </CampaignListBlock>
       )}
       {!!campaign.open_steps?.length && (
-        <CampaignListBlock title="待推进意图">
+        <CampaignListBlock title="待推进步骤">
           {campaign.open_steps.map((item, index) => (
             <article key={`open-intent-${index}`} className="project-campaign-item">
               <strong>{item}</strong>
@@ -3411,7 +3386,7 @@ function IntentModal({ fromIds, facts, onClose, onSubmit }) {
   };
 
   return (
-    <Modal title="新增探索意图" onClose={onClose}>
+    <Modal title="新增执行步骤" onClose={onClose}>
       <form className="stack-form modal-body" onSubmit={submit}>
         <label>
           <span>来源事实</span>
@@ -3430,7 +3405,7 @@ function IntentModal({ fromIds, facts, onClose, onSubmit }) {
           </select>
         </label>
         <label>
-          <span>意图描述</span>
+          <span>步骤描述</span>
           <textarea
             rows={5}
             value={form.description}
@@ -4740,7 +4715,7 @@ function VulnerabilityDrawer({ vuln, onClose, onExport, onStatusChange }) {
               <div className="drawer-info-grid">
                 <InfoBox label="所属项目" value={`${vuln.project_name} (${vuln.project_id})`} />
                 <InfoBox label="确认事实" value={vuln.fact_id} />
-                <InfoBox label="来源意图" value={vuln.source_step_id || "-"} />
+                <InfoBox label="来源步骤" value={vuln.source_step_id || vuln.source_intent_id || "-"} />
                 <InfoBox label="工作节点" value={vuln.source_worker || "-"} />
               </div>
             </section>
@@ -6492,7 +6467,7 @@ function SettingsModal({ onClose, runAction }) {
             <div className="settings-section-head">
               <div>
                 <h3>保留与清理</h3>
-                <p>只清理历史记录、导出记录和已读通知，不触碰项目事实、意图和漏洞数据。</p>
+                <p>只清理历史记录、导出记录和已读通知，不触碰项目事实、目标、步骤和发现数据。</p>
               </div>
               <Badge tone="medium">维护</Badge>
             </div>
@@ -6532,7 +6507,7 @@ function SettingsModal({ onClose, runAction }) {
                   value={settings.project_idle_alert_hours}
                   onChange={(event) => setNumber("project_idle_alert_hours", event.target.value)}
                 />
-                <small className="field-hint">活动项目最近无新增事实、提示、意图或 Reason 心跳时触发告警。</small>
+                <small className="field-hint">活动项目最近无新增事实、提示、步骤或 Decide 心跳时触发告警。</small>
               </label>
               <div className="settings-action-card">
                 <div>

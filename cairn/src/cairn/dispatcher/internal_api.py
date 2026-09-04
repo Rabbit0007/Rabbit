@@ -290,7 +290,7 @@ def _write_dispatch_config(loop: "DispatcherLoop", config: DispatchConfig) -> No
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
-            LOGGER.debug("failed to remove temporary dispatcher config %s", tmp_path)
+            LOG.debug("failed to remove temporary dispatcher config %s", tmp_path)
 
 
 def _validation_detail(exc: Exception) -> dict[str, str]:
@@ -305,17 +305,25 @@ def _validation_detail(exc: Exception) -> dict[str, str]:
 
 
 def _healthcheck_payload(result: Any) -> dict[str, Any]:
-    preview = result.response_preview or result.stderr_preview or ""
+    detail = str(getattr(result, "detail", "") or "")
+    response_preview = str(getattr(result, "response_preview", "") or detail)
+    stderr_preview = str(getattr(result, "stderr_preview", "") or "")
+    status = getattr(result, "status", None)
+    http_status = getattr(result, "http_status", None)
+    if http_status is None and status is not None:
+        http_status = str(status)
+    endpoint = str(getattr(result, "endpoint", "") or getattr(result, "command", "") or "")
+    preview = response_preview or stderr_preview
     return {
         "worker_name": result.worker_name,
         "ok": result.ok,
-        "returncode": result.returncode,
+        "returncode": int(getattr(result, "returncode", 0 if result.ok else 1)),
         "duration_ms": result.duration_ms,
-        "http_status": result.http_status,
-        "response_preview": result.response_preview,
-        "stderr_preview": result.stderr_preview,
+        "http_status": http_status,
+        "response_preview": response_preview,
+        "stderr_preview": stderr_preview,
         "preview": preview,
-        "command": result.command,
+        "command": endpoint,
     }
 
 
@@ -360,6 +368,8 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
     running_tasks = _safe_copy(lambda: list(loop.futures.values()))
     unhealthy_until = dict(_safe_copy(lambda: list(loop.worker_unhealthy_until.items())))
     rejected_until = dict(_safe_copy(lambda: list(loop.worker_rejected_until.items())))
+    failed_until = dict(_safe_copy(lambda: list(loop.worker_failed_until.items())))
+    failure_counts = dict(_safe_copy(lambda: list(loop.worker_failure_counts.items())))
     runtime_project_ids = set(_safe_copy(lambda: list(loop.runtime_project_ids)))
 
     history_buffer = getattr(loop, "task_history", None)
@@ -406,8 +416,9 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
     for task in running_tasks:
         started_at = getattr(task, "started_at", None)
         running_seconds = round(max(0.0, now - started_at), 3) if isinstance(started_at, (int, float)) else None
-        if task.intent_id is not None:
-            description = f"{task.task_type} project={task.project_id} intent={task.intent_id}"
+        step_id = getattr(task, "step_id", None) or getattr(task, "intent_id", None)
+        if step_id is not None:
+            description = f"{task.task_type} project={task.project_id} step={step_id}"
         else:
             description = f"{task.task_type} project={task.project_id}"
         running_payload.append(
@@ -415,7 +426,8 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
                 "project_id": task.project_id,
                 "task_type": task.task_type,
                 "worker_name": task.worker_name,
-                "intent_id": task.intent_id,
+                "step_id": step_id,
+                "intent_id": step_id,
                 "current_task": _truncate(description),
                 "started_at": started_at,
                 "running_seconds": running_seconds,
@@ -455,6 +467,24 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
             }
         )
 
+    failures_payload: list[dict[str, Any]] = []
+    for key, until in failed_until.items():
+        try:
+            project_id, task_type, worker_name = key
+        except (ValueError, TypeError):
+            continue
+        failures_payload.append(
+            {
+                "project_id": project_id,
+                "task_type": task_type,
+                "worker_name": worker_name,
+                "failed_until": until,
+                "failure_count": int(failure_counts.get(key, 0)),
+                "seconds_remaining": round(max(0.0, until - now), 3),
+                "failed": until > now,
+            }
+        )
+
     runtime = loop.config.runtime
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -472,6 +502,7 @@ def build_status_snapshot(loop: "DispatcherLoop") -> dict[str, Any]:
         "task_history": history_payload,
         "heartbeats": heartbeats_payload,
         "rejections": rejected_payload,
+        "failures": failures_payload,
     }
 
 

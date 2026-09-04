@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from docker.errors import APIError, DockerException
 from docker.models.containers import Container
@@ -22,6 +22,23 @@ class ProcessResult:
     timed_out: bool = False
     cancelled: bool = False
     cancel_reason: str | None = None
+
+
+@runtime_checkable
+class ExecProcess(Protocol):
+    """A worker process, regardless of whether it runs inside a container or on the host.
+
+    Container mode uses ManagedProcess; local mode uses LocalProcess. Both expose this
+    surface so the task runners, heartbeat lease and cancellation stay backend-agnostic.
+    """
+
+    def start(self) -> None: ...
+
+    def communicate(self, timeout: float | None) -> ProcessResult: ...
+
+    def kill(self) -> None: ...
+
+    def cancel(self, reason: str) -> None: ...
 
 
 class ManagedProcess:

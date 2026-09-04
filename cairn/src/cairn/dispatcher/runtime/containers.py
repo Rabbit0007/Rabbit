@@ -82,7 +82,8 @@ class ContainerManager:
             return lock
 
     def create_startup_container(self) -> str:
-        name = f"{self._STARTUP_PREFIX}{uuid.uuid4().hex[:12]}"
+        prefix = getattr(self._config, "startup_name_prefix", self._STARTUP_PREFIX)
+        name = f"{prefix}{uuid.uuid4().hex[:12]}"
         LOG.debug("creating startup healthcheck container container=%s image=%s", name, self._config.image)
         try:
             self._client.containers.run(

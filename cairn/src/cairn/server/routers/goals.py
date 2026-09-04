@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Response
 
 from cairn.server.db import get_conn
 from cairn.server.models import (
@@ -10,11 +10,13 @@ from cairn.server.models import (
 from cairn.server.services import (
     check_project_active,
     check_all_top_goals_completed,
+    clear_project_decide,
     goal_to_model,
     get_goal_or_404,
     next_goal_id,
-    next_step_id,
     utcnow,
+    validate_facts_exist,
+    validate_goal_active,
 )
 
 router = APIRouter(tags=["goals"])
@@ -29,7 +31,7 @@ def create_goal(project_id: str, body: CreateGoalRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
         if body.parent_goal_id is not None:
-            get_goal_or_404(conn, project_id, body.parent_goal_id)
+            validate_goal_active(conn, project_id, body.parent_goal_id)
 
         now = utcnow()
         gid = next_goal_id(conn, project_id)
@@ -57,14 +59,10 @@ def create_goal(project_id: str, body: CreateGoalRequest):
 def update_goal(project_id: str, goal_id: str, body: UpdateGoalRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
-        get_goal_or_404(conn, project_id, goal_id)
+        goal = get_goal_or_404(conn, project_id, goal_id)
+        if goal["status"] == "completed":
+            raise HTTPException(409, "Completed goals cannot be updated")
 
-        if body.status is not None:
-            completed_at = utcnow() if body.status == "completed" else None
-            conn.execute(
-                "UPDATE goals SET status = ?, completed_at = ? WHERE id = ? AND project_id = ?",
-                (body.status, completed_at, goal_id, project_id),
-            )
         if body.priority is not None:
             conn.execute(
                 "UPDATE goals SET priority = ? WHERE id = ? AND project_id = ?",
@@ -80,7 +78,36 @@ def update_goal(project_id: str, goal_id: str, body: UpdateGoalRequest):
             "SELECT * FROM goals WHERE id = ? AND project_id = ?",
             (goal_id, project_id),
         ).fetchone()
-        return goal_to_model(updated)
+        return goal_to_model(conn, updated, project_id)
+
+
+@router.delete("/projects/{project_id}/goals/{goal_id}", status_code=204)
+def delete_sub_goal(project_id: str, goal_id: str):
+    """Delete an unused active sub-goal; the root completion condition is immutable."""
+    with get_conn() as conn:
+        check_project_active(conn, project_id)
+        goal = get_goal_or_404(conn, project_id, goal_id)
+        if goal["parent_goal_id"] is None:
+            raise HTTPException(409, "Top-level goals cannot be deleted")
+        if goal["status"] != "active":
+            raise HTTPException(409, "Completed goals cannot be deleted")
+        child = conn.execute(
+            "SELECT 1 FROM goals WHERE project_id = ? AND parent_goal_id = ? LIMIT 1",
+            (project_id, goal_id),
+        ).fetchone()
+        if child is not None:
+            raise HTTPException(409, "Goal still has sub-goals")
+        linked_step = conn.execute(
+            "SELECT 1 FROM steps WHERE project_id = ? AND goal_id = ? LIMIT 1",
+            (project_id, goal_id),
+        ).fetchone()
+        if linked_step is not None:
+            raise HTTPException(409, "Goal is still referenced by steps")
+        conn.execute(
+            "DELETE FROM goals WHERE id = ? AND project_id = ?",
+            (goal_id, project_id),
+        )
+        return Response(status_code=204)
 
 
 @router.post(
@@ -90,32 +117,32 @@ def update_goal(project_id: str, goal_id: str, body: UpdateGoalRequest):
 def complete_goal(project_id: str, goal_id: str, body: CompleteGoalRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
-        get_goal_or_404(conn, project_id, goal_id)
+        goal = get_goal_or_404(conn, project_id, goal_id)
+        if goal["status"] == "completed":
+            raise HTTPException(409, "Goal already completed")
+        validate_facts_exist(conn, project_id, body.from_)
 
         now = utcnow()
         conn.execute(
-            "UPDATE goals SET status = 'completed', completed_at = ? WHERE id = ? AND project_id = ?",
-            (now, goal_id, project_id),
-        )
-
-        # Create a completion step for traceability
-        sid = next_step_id(conn, project_id)
-        conn.execute(
-            "INSERT INTO steps (id, project_id, to_fact_id, description, goal_id, priority, "
-            "creator, worker, last_heartbeat_at, created_at, concluded_at, abandoned) "
-            "VALUES (?, ?, NULL, ?, ?, 0, ?, ?, ?, ?, ?, 0)",
-            (sid, project_id, body.description, goal_id, body.worker, body.worker, now, now, now),
+            "UPDATE goals SET status = 'completed', completed_at = ?, completion_description = ?, completed_by = ? "
+            "WHERE id = ? AND project_id = ?",
+            (now, body.description, body.worker, goal_id, project_id),
         )
         for fid in body.from_:
             conn.execute(
-                "INSERT INTO step_sources (step_id, project_id, fact_id) VALUES (?, ?, ?)",
-                (sid, project_id, fid),
+                "INSERT INTO goal_sources (goal_id, project_id, fact_id) VALUES (?, ?, ?)",
+                (goal_id, project_id, fid),
             )
 
-        # Auto-complete project if all top-level goals are done
+        # The project terminates only when every current completion condition is met.
         if check_all_top_goals_completed(conn, project_id):
             conn.execute(
                 "UPDATE projects SET status = 'completed' WHERE id = ?",
+                (project_id,),
+            )
+            clear_project_decide(conn, project_id)
+            conn.execute(
+                "UPDATE steps SET worker = NULL WHERE project_id = ? AND concluded_at IS NULL",
                 (project_id,),
             )
 
@@ -123,4 +150,4 @@ def complete_goal(project_id: str, goal_id: str, body: CompleteGoalRequest):
             "SELECT * FROM goals WHERE id = ? AND project_id = ?",
             (goal_id, project_id),
         ).fetchone()
-        return goal_to_model(updated)
+        return goal_to_model(conn, updated, project_id)

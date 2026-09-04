@@ -411,6 +411,7 @@ def worker_observability() -> WorkerObservability:
                 h.project_id,
                 COALESCE(p.title, h.project_id) AS project_name,
                 h.task_type,
+                h.step_id,
                 h.intent_id,
                 h.started_at,
                 h.completed_at,
@@ -458,7 +459,8 @@ def worker_observability() -> WorkerObservability:
                     started_at=row["started_at"],
                     completed_at=row["completed_at"],
                     duration_seconds=row["duration_seconds"],
-                    intent_id=row["intent_id"],
+                    step_id=row["step_id"] or row["intent_id"],
+                    intent_id=row["step_id"] or row["intent_id"],
                 )
             )
 
@@ -479,7 +481,8 @@ def worker_observability() -> WorkerObservability:
                 project_name=project_names.get(project_id, project_id or "-"),
                 task_type=str(item.get("task_type") or "-"),
                 current_task=str(item.get("current_task") or "-"),
-                intent_id=item.get("intent_id"),
+                step_id=item.get("step_id") or item.get("intent_id"),
+                intent_id=item.get("step_id") or item.get("intent_id"),
                 running_seconds=float(item["running_seconds"]) if isinstance(item.get("running_seconds"), (int, float)) else None,
             )
         )
@@ -578,16 +581,16 @@ def test_worker_config(request: WorkerConnectionTestRequest) -> WorkerConnection
 
 
 def _build_history_description(
-    task_type: str, project_name: str, intent_id: str | None
+    task_type: str, project_name: str, step_id: str | None
 ) -> str:
     """Compose a human-readable description for a history row.
 
     The ``worker_task_history`` table does not persist a free-form description,
     so one is synthesized from the task type, source project, and (when present)
-    the intent the task acted on (requirement 11.2).
+    the Step the task acted on (requirement 11.2).
     """
-    if intent_id:
-        return f"{task_type} on {project_name} (intent {intent_id})"
+    if step_id:
+        return f"{task_type} on {project_name} (step {step_id})"
     return f"{task_type} on {project_name}"
 
 
@@ -613,6 +616,7 @@ def worker_history(
             """
             SELECT
                 h.task_type,
+                h.step_id,
                 h.intent_id,
                 h.started_at,
                 h.duration_seconds,
@@ -636,7 +640,7 @@ def worker_history(
                 project_name=project_name,
                 task_type=row["task_type"],
                 description=_build_history_description(
-                    row["task_type"], project_name, row["intent_id"]
+                    row["task_type"], project_name, row["step_id"] or row["intent_id"]
                 ),
                 started_at=row["started_at"],
                 duration_seconds=row["duration_seconds"],

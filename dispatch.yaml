@@ -1,8 +1,8 @@
 server: http://rabbit-pentest-server:8000
 runtime:
-  max_workers: 2
-  max_running_projects: 3
-  max_project_workers: 2
+  max_workers: 4
+  max_running_projects: 1
+  max_project_workers: 3
   interval: 3
   healthcheck_timeout: 60
   prompt_group: default
@@ -28,138 +28,55 @@ common_env:
   TSEC_SERVER_HOST: 10.0.0.44:8000
   TSEC_AGENT_TOKEN: xxx
 workers:
-- name: pi_deepseek-v4-pro_1
+- name: deepseek-v4-pro-1
   type: pi
-  enabled: false
+  enabled: true
   task_types:
   - decide
   - execute
   max_running: 1
   priority: 0
   env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseek-v4-pro
-    PI_BASE_URL: https://api.deepseek.com/v1
-    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
+    PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
-- name: pi_deepseek-v4-pro_2
+- name: deepseek-v4-pro-2
   type: pi
-  enabled: false
+  enabled: true
   task_types:
   - decide
   - execute
   max_running: 1
   priority: 1
   env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseek-v4-pro
-    PI_BASE_URL: https://api.deepseek.com/v1
-    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
+    PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
-- name: pi_deepseek-v4-pro_3
+- name: deepseek-v4-pro-3
   type: pi
-  enabled: false
+  enabled: true
   task_types:
   - decide
   - execute
   max_running: 1
   priority: 2
   env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: deepseek-v4-pro
-    PI_BASE_URL: https://api.deepseek.com/v1
-    PI_API_KEY: ${PI_API_KEY_DS_OFFICIAL}
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
+    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
+    PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions
-- name: chat-gpt-5.4-1
-  type: pi
-  enabled: false
-  task_types:
-  - decide
-  - execute
-  max_running: 2
-  priority: 0
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: gpt-5.4
-    PI_BASE_URL: https://vip.luminai.cc/v1
-    PI_API_KEY: ${OPENAI_API_KEY_LUMINAI}
-    PI_PROVIDER_API: openai-completions
-- name: chat-gpt-5.4-2
-  type: pi
-  enabled: false
-  task_types:
-  - decide
-  - execute
-  max_running: 2
-  priority: 0
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: gpt-5.4
-    PI_BASE_URL: https://vip.luminai.cc/v1
-    PI_API_KEY: ${OPENAI_API_KEY_LUMINAI}
-    PI_PROVIDER_API: openai-completions
-- name: chat-gpt-5.4-3
-  type: pi
-  enabled: false
-  task_types:
-  - decide
-  - execute
-  max_running: 2
-  priority: 0
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: gpt-5.4
-    PI_BASE_URL: https://vip.luminai.cc/v1
-    PI_API_KEY: ${OPENAI_API_KEY_LUMINAI}
-    PI_PROVIDER_API: openai-completions
-- name: glm-5.2-1
+- name: deepseek-v4-pro-4
   type: pi
   enabled: true
   task_types:
   - decide
   - execute
   max_running: 1
-  priority: 12
+  priority: 3
   env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: Ali-dashscope/GLM-5.2
+    PI_MODEL: ByteDance-volcengine/DeepSeek-V4-Pro
     PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_GLM52}
-    PI_PROVIDER_API: openai-completions
-- name: glm-5.2-2
-  type: pi
-  enabled: true
-  task_types:
-  - decide
-  - execute
-  max_running: 1
-  priority: 13
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: Ali-dashscope/GLM-5.2
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_GLM52}
-    PI_PROVIDER_API: openai-completions
-- name: glm-5.2-3
-  type: pi
-  enabled: true
-  task_types:
-  - decide
-  - execute
-  max_running: 1
-  priority: 14
-  env:
-    TSEC_SERVER_HOST: 10.0.0.44:8000
-    TSEC_AGENT_TOKEN: xxx
-    PI_MODEL: Ali-dashscope/GLM-5.2
-    PI_BASE_URL: https://xplt.sdu.edu.cn:4000/v1
-    PI_API_KEY: ${PI_API_KEY_GLM52}
+    PI_API_KEY: ${PI_API_KEY_DEEPSEEK_V4}
     PI_PROVIDER_API: openai-completions

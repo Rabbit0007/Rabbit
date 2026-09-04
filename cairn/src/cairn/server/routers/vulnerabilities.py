@@ -4,10 +4,10 @@ This is an additive router exposing the ``/api/vulnerabilities`` endpoints. Task
 4.3 implements the *list* and *summary* endpoints; task 4.4 adds the *export*
 and *refresh* endpoints on this same router.
 
-The router is read-only with respect to existing core tables: it reads from the
-``vulnerabilities`` table (created by :mod:`cairn.server.product_db` and
-populated by :mod:`cairn.server.vulnerability_extraction`) joined with the
-``projects`` table to resolve each finding's ``project_name``.
+The router is read-only with respect to the FGS core tables: it reads from the
+``vulnerabilities`` product projection populated from native Cairn-Y Findings
+by :mod:`cairn.server.finding_projection`, joined with ``projects`` to resolve
+each finding's ``project_name``.
 
 Response shapes follow :mod:`cairn.server.vulnerabilities_models`.
 """
@@ -94,6 +94,9 @@ def _vulnerability_select(where_sql: str) -> str:
                 v.severity    AS severity,
                 COALESCE(v.status, 'confirmed') AS status,
                 v.discovered_at AS discovered_at,
+                v.finding_id AS finding_id,
+                v.source_intent_id AS source_step_id,
+                v.source_intent_description AS source_step_description,
                 v.source_intent_id AS source_intent_id,
                 v.source_intent_description AS source_intent_description,
                 v.source_worker AS source_worker,
@@ -1773,14 +1776,11 @@ def export_vulnerabilities(
 
 @router.post("/refresh")
 def refresh_vulnerabilities() -> VulnerabilitySummary:
-    """Re-scan all project facts and return the refreshed per-severity summary.
+    """Queue Finding report enrichment and return the current summary.
 
-    Delegates to the existing extraction service's
-    :func:`~cairn.server.vulnerability_extraction.scan_all_projects`, which
-    reconciles the ``vulnerabilities`` table against the current facts for every
-    project (re-classifying matches and removing stale findings). The response
-    is the updated summary so callers can reflect the new totals without a
-    separate request to ``/summary``.
+    Refresh never derives a report item from Fact prose.  Execute-created
+    Findings remain the source of truth; the report agent may only enrich those
+    existing records and refresh their product projection.
     """
     request_report_sync()
     summary = vulnerabilities_summary()

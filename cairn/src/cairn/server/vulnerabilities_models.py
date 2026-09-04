@@ -40,6 +40,10 @@ class Vulnerability(BaseModel):
     severity: Severity
     status: VulnerabilityStatus = "confirmed"
     discovered_at: str
+    finding_id: str | None = None
+    source_step_id: str | None = None
+    source_step_description: str | None = None
+    # Compatibility aliases for older report templates.
     source_intent_id: str | None = None
     source_intent_description: str | None = None
     source_worker: str | None = None

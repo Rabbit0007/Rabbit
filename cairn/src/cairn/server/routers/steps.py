@@ -1,10 +1,12 @@
-from fastapi import APIRouter
+import json
+
+from fastapi import APIRouter, HTTPException
 
 from cairn.server.db import get_conn
+from cairn.server.finding_projection import sync_finding
 from cairn.server.models import (
     ConcludeRequest,
     ConcludeResponse,
-    CreateFindingRequest,
     CreateStepRequest,
     Fact,
     Finding,
@@ -13,9 +15,9 @@ from cairn.server.models import (
     UpdateStepRequest,
 )
 from cairn.server.services import (
-    build_findings,
     check_project_active,
     get_claimable_open_step_or_404,
+    get_step_or_404,
     get_releasable_open_step_or_404,
     next_fact_id,
     next_finding_id,
@@ -23,7 +25,7 @@ from cairn.server.services import (
     step_to_model,
     utcnow,
     validate_facts_exist,
-    validate_goal_exists,
+    validate_goal_active,
 )
 
 router = APIRouter(tags=["steps"])
@@ -39,7 +41,7 @@ def create_step(project_id: str, body: CreateStepRequest):
         check_project_active(conn, project_id)
         validate_facts_exist(conn, project_id, body.from_)
         if body.goal_id is not None:
-            validate_goal_exists(conn, project_id, body.goal_id)
+            validate_goal_active(conn, project_id, body.goal_id)
 
         now = utcnow()
         sid = next_step_id(conn, project_id)
@@ -88,7 +90,13 @@ def create_step(project_id: str, body: CreateStepRequest):
 def update_step(project_id: str, step_id: str, body: UpdateStepRequest):
     with get_conn() as conn:
         check_project_active(conn, project_id)
-        get_claimable_open_step_or_404(conn, project_id, step_id, worker="")
+        current = get_step_or_404(conn, project_id, step_id)
+        if current["to_fact_id"] is not None or current["concluded_at"] is not None:
+            raise HTTPException(409, "Concluded steps cannot be updated")
+        if current["abandoned"]:
+            raise HTTPException(409, "Abandoned steps cannot be updated")
+        if current["worker"] is not None:
+            raise HTTPException(409, "Claimed steps cannot be updated")
 
         if body.priority is not None:
             conn.execute(
@@ -96,7 +104,7 @@ def update_step(project_id: str, step_id: str, body: UpdateStepRequest):
                 (body.priority, step_id, project_id),
             )
         if body.goal_id is not None:
-            validate_goal_exists(conn, project_id, body.goal_id)
+            validate_goal_active(conn, project_id, body.goal_id)
             conn.execute(
                 "UPDATE steps SET goal_id = ? WHERE id = ? AND project_id = ?",
                 (body.goal_id, step_id, project_id),
@@ -189,19 +197,23 @@ def conclude(project_id: str, step_id: str, body: ConcludeRequest):
         if body.finding is not None:
             vid = next_finding_id(conn, project_id)
             conn.execute(
-                "INSERT INTO findings (id, project_id, title, description, severity, fact_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO findings (id, project_id, title, description, severity, kind, data_json, fact_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (vid, project_id, body.finding.title, body.finding.description,
-                 body.finding.severity, fid, now),
+                 body.finding.severity, body.finding.kind,
+                 json.dumps(body.finding.data, ensure_ascii=False), fid, now),
             )
             finding = Finding(
                 id=vid,
                 title=body.finding.title,
                 description=body.finding.description,
                 severity=body.finding.severity,
+                kind=body.finding.kind,
+                data=body.finding.data,
                 fact_id=fid,
                 created_at=now,
             )
+            sync_finding(conn, project_id, vid)
 
         return ConcludeResponse(
             fact=Fact(id=fid, description=body.description),

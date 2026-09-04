@@ -15,7 +15,7 @@ export const STATUS_META = {
   disabled: { label: "已关闭", tone: "muted" },
 };
 
-export const TASK_TYPES = ["bootstrap", "reason", "explore"];
+export const TASK_TYPES = ["decide", "execute"];
 
 export function cn(...parts) {
   return parts.filter(Boolean).join(" ");

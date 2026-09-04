@@ -1,10 +1,10 @@
-# Rabbit
+# Rabbit（Cairn-Y）
 
 ![Rabbit banner](README/rabbit-banner.png)
 
-Rabbit 是一个面向智能渗透测试和目标导向探索的事实图工作台。它把一次测试过程拆成可追溯的事实、意图、提示和结论，让人和 Agent 在同一个工作面上推进任务，并把过程沉淀成可复盘的漏洞报告。
+Rabbit 是基于 [oritera/Cairn](https://github.com/oritera/Cairn) 演进而来的 Cairn-Y 实现。它保留 Cairn 的事实图与 Worker 协作核心，但把运行模型收敛为一条可验证的闭环：**Server 保存唯一状态，Dispatcher 负责调度，Pi Worker 负责 Decide / Execute，所有执行结果最终写回 Fact，可确认的问题以 Finding 作为唯一真相源。**
 
-当前工程目录和 Python CLI 仍保留 `cairn` 命名，这是为了兼容现有代码结构；产品界面和文档统一使用 Rabbit。
+项目目录和 Python CLI 继续使用 `cairn` 名称，以兼容原工程结构；产品界面使用 Rabbit。
 
 ## 预览
 
@@ -16,172 +16,227 @@ Rabbit 是一个面向智能渗透测试和目标导向探索的事实图工作�
 
 ![Rabbit workspace](README/rabbit-workspace.png)
 
-## 核心能力
+## Cairn-Y 核心模型
 
-- 事实图探索：用 Origin、Goal、Fact、Intent、Hint 记录安全测试过程。
-- 项目管理：支持创建、停止、重新打开、完成、删除和快照查看。
-- Agent 调度：Dispatcher 将项目状态转成 `bootstrap`、`reason`、`explore` 任务并分发给 Worker。
-- 工作节点面板：查看 Worker 在线状态、当前任务、任务历史和心跳情况，并可在前端新增、编辑、测试模型配置。
-- 漏洞报告：从项目事实中提取漏洞，按项目折叠展示，支持严重程度和项目筛选。
-- Markdown 报告导出：支持项目级和单漏洞级导出，包含漏洞清单、关键证据、证明数据包和漏洞浮现过程。
-- 模板管理：提供常见测试场景模板，并支持自定义模板。
-- 认证体系：支持注册、登录、退出、修改密码、验证码和服务端 Session。
+```text
+Origin
+  └─ Goal
+      └─ Decide（串行决策，只创建/调整 Step）
+          └─ Step
+              └─ Execute（并行执行）
+                  ├─ Fact
+                  └─ Finding（可选，必须关联 Fact）
+```
 
-## 工作模型
-
-Rabbit 的核心不是一次性给出扫描结果，而是维护一张持续增长的事实图：
-
-- `Origin`：项目起点，例如目标地址、范围、入口信息。
-- `Goal`：项目目标，例如确认漏洞、拿到权限证明、完成靶场任务。
-- `Fact`：已经确认的事实，只追加，不覆盖历史。
-- `Intent`：从事实出发的探索方向或待执行任务。
-- `Hint`：人工补充的提示，用于影响后续探索但不直接替代事实。
-
-这种结构让漏洞报告可以反向追溯：一个漏洞来自哪个项目、哪个事实、哪个 Worker、哪些证据和哪些探索步骤。
+- **Server**：唯一状态真相源，维护 Project、Goal、Step、Fact 和 Finding。
+- **Dispatcher**：负责项目生命周期、串行 Decide、并行 Execute、Worker 调度、租约、心跳和超时。
+- **Pi Worker**：通用执行单元；当前运行配置只注册 Pi，不保留第二套执行内核。
+- **Fact**：执行阶段确认的客观结果；Step 无论成功、失败还是未发现问题，最终都收敛为 Fact。
+- **Finding**：Execute 原生输出的结构化发现，是报告系统唯一允许使用的发现来源。
+- **Vulnerability**：Finding 面向界面和导出格式的投影，不是第二套漏洞数据源。
+- **报告 Agent**：只整理已有 Finding 的表达和证据，不从 Fact 猜测漏洞、不新增漏洞、不改变严重度。
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    UI["Rabbit Web UI"] --> Server["Rabbit Server / FastAPI"]
+    UI["Rabbit Web UI"] --> Server["Server / FastAPI"]
     Server --> DB[("SQLite")]
-    Dispatcher["Rabbit Dispatcher"] --> Server
-    Dispatcher --> Container["Project Container"]
-    Container --> Worker["Worker / Agent CLI"]
-    Worker --> Container
+    Dispatcher["Dispatcher"] --> Server
+    Dispatcher --> Worker["Pi Worker Container"]
+    Worker --> Dispatcher
+    Worker --> Target["Project Scope"]
+    Server --> Report["Finding Projection & Report Agent"]
 ```
 
-- Web UI：项目、图谱、漏洞报告、Worker、模板和账号界面。
-- Server：协议接口、认证、数据存储、漏洞提取和静态资源服务。
-- Dispatcher：调度循环、Worker 选择、任务超时和结果写回。
-- Project Container：每个项目独立执行环境，承载 Agent 和安全测试工具。
+运行时只有三类任务：
+
+1. `decide`：读取当前 FGS 状态，创建下一批 Step；同一项目始终串行。
+2. `execute`：执行一个 Step，输出 Fact 描述和可选 Finding；允许并行。
+3. `execute_conclude`：将结果原子写回 Server，结束 Step 并建立来源关系。
+
+## 功能
+
+- 项目创建、运行、停止、恢复、完成和删除
+- Goal / Step / Fact 图谱与完整来源追踪
+- Pi Worker 健康检查、并发控制、租约和容器生命周期管理
+- Finding 原子写入及漏洞视图投影
+- 后台报告 Agent 对已有证据进行结构化整理
+- JSON、CSV、Markdown、PDF、DOCX 报告导出
+- 客户 DOCX 模板导入、启用和证据图片填充
+- 登录、注册、验证码和服务端 Session
+- 项目上下文和出站范围约束
 
 ## 快速启动
 
-### Docker Compose
+### 环境要求
 
-推荐使用 Compose 启动完整环境：
+- Docker Desktop 或 Docker Engine
+- Docker Compose v2
+- 可用的 OpenAI-compatible 模型接口
+
+### 1. 克隆仓库
 
 ```bash
-docker compose up --build
+git clone https://github.com/Rabbit0007/Rabbit.git
+cd Rabbit
 ```
 
-访问：
+### 2. 配置环境变量
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`，至少填写：
+
+```dotenv
+CAIRN_INTERNAL_TOKEN=replace-with-random-value
+CAIRN_DISPATCHER_INTERNAL_TOKEN=replace-with-the-same-random-value
+CAIRN_WORKER_EGRESS_PROXY_TOKEN=replace-with-another-random-value
+PI_API_KEY_DEEPSEEK_V4=your-model-api-key
+```
+
+默认 `dispatch.yaml` 使用：
+
+```text
+Model: ByteDance-volcengine/DeepSeek-V4-Pro
+Base URL: https://xplt.sdu.edu.cn:4000/v1
+Provider API: openai-completions
+```
+
+如需使用其他 OpenAI-compatible 模型，只需修改 `dispatch.yaml` 中 Pi Worker 的 `PI_MODEL`、`PI_BASE_URL` 和 API Key 环境变量引用。
+
+### 3. 启动
+
+```bash
+docker compose up -d --build
+```
+
+查看状态：
+
+```bash
+docker compose ps
+docker compose logs -f pentest-server pentest-dispatcher
+```
+
+打开：
 
 ```text
 http://127.0.0.1:8000/
 ```
 
-首次使用请在登录页切换到注册，创建自己的账号。
+首次启动后，在登录页注册第一个账号。
 
-数据默认保存在：
+### 4. 停止
 
-```text
-./datas/cairn/
+```bash
+docker compose down
 ```
 
-### 本地开发
+数据库保存在 `./datas/cairn/`，报告证据保存在 Docker volume `rabbit-pentest-artifacts`。
 
-只启动 Server：
+## 默认 Worker 并发
+
+仓库默认注册 4 个同模型 Pi Worker：
+
+```text
+deepseek-v4-pro-1
+deepseek-v4-pro-2
+deepseek-v4-pro-3
+deepseek-v4-pro-4
+```
+
+默认调度约束：
+
+```yaml
+runtime:
+  max_workers: 4
+  max_running_projects: 1
+  max_project_workers: 3
+
+tasks:
+  decide:
+    max_steps: 3
+```
+
+这样一次只运行一个项目，最多并行执行 3 个 Step；第四个 Worker 用于调度余量和故障切换。Decide 仍然保持串行，不会出现多个决策器同时修改 FGS。
+
+## 报告生成
+
+报告链路只有一条：
+
+```text
+Decide 创建 Step
+→ Pi Execute 返回 description + optional finding
+→ conclude 原子创建 Fact 并结束 Step
+→ 合法 Finding 与 Fact 关联写入
+→ Finding 投影为漏洞视图
+→ 报告 Agent 整理已有 Finding
+→ UI 展示或导出
+```
+
+进入漏洞报告的 Finding 必须满足：
+
+- `kind` 为 `security_vulnerability` 或 `vulnerability`
+- `severity` 为 `critical`、`high`、`medium` 或 `low`
+- 关联真实 `fact_id`
+
+只有 Fact、没有 Finding 的执行结果不会进入漏洞报告。
+
+## 开发与测试
+
+后端测试：
 
 ```bash
 cd cairn
 uv sync
+uv run --with pytest --with httpx python -m pytest
+```
+
+前端构建：
+
+```bash
+cd cairn/frontend
+npm install
+npm run build
+```
+
+只启动本地 Server：
+
+```bash
+cd cairn
 uv run cairn serve --host 127.0.0.1 --port 8765 --log-level info
-```
-
-访问：
-
-```text
-http://127.0.0.1:8765/
-```
-
-本地默认数据库：
-
-```text
-~/.local/share/cairn/cairn.db
-```
-
-## Dispatcher 配置
-
-仓库根目录包含两个调度配置：
-
-```text
-dispatch.yaml
-dispatch_mock.yaml
-```
-
-常用字段：
-
-- `server`：Rabbit Server 地址。
-- `runtime.interval`：调度循环间隔。
-- `runtime.max_workers`：全局 Worker 并发上限。
-- `runtime.max_running_projects`：同时运行的项目数。
-- `runtime.max_project_workers`：单项目 Worker 并发上限。
-- `tasks.bootstrap/reason/explore`：不同任务阶段的超时和行为限制。
-- `container.image`：项目执行容器镜像。
-- `workers[]`：Worker 名称、类型、可执行任务、并发和环境变量。
-
-`dispatch.yaml` 仍然是启动时的兼容配置来源；运行后也可以在 Web UI 的“工作节点”页面新增、编辑和测试 Worker。前端会通过 Dispatcher 内部接口验证配置并写回 YAML，密钥字段只显示掩码。
-
-公开仓库前请检查 `dispatch.yaml`，不要提交真实 API Key、Token、内部地址或其他敏感配置。
-
-## 漏洞报告
-
-漏洞报告页会把发现结果按项目聚合。每个项目可以展开查看单条漏洞，单条漏洞内包含：
-
-- 基本信息：严重程度、确认事实、关联事实、来源意图和工作节点。
-- 漏洞描述：合并同一项目内相同漏洞编号或同类漏洞的最终确认描述。
-- 关键证据：保留可证明漏洞存在的核心输出。
-- 漏洞证明数据包：以 Markdown 代码块展示请求和响应/回显。
-- 漏洞浮现过程：按 Origin、Intent、Fact 追溯漏洞如何被发现。
-
-当前 UI 只保留 Markdown 导出：
-
-- 项目行 `导出 MD`：导出该项目的漏洞报告。
-- 单漏洞详情 `导出 MD`：导出当前漏洞的独立报告。
-
-导出文件名会按范围生成，例如：
-
-```text
-proj_004.md
-proj_004-f014.md
 ```
 
 ## 目录结构
 
 ```text
 .
-├── cairn/                    # Python 工程目录
-│   ├── src/cairn/server/     # Server、路由、认证、模型和静态前端
-│   ├── src/cairn/dispatcher/ # 调度器、任务模型和 Worker 适配
-│   └── tests/                # 后端测试
-├── container/                # 项目执行容器
-├── docs/specs/               # 协议和调度设计文档
-├── README/                   # README 图片资源
-├── dispatch.yaml             # 调度配置
-├── dispatch_mock.yaml        # Mock 调度配置
-└── docker-compose.yaml       # Server + Dispatcher 编排
+├── cairn/
+│   ├── frontend/                         # Web UI
+│   ├── src/cairn/dispatcher/             # 调度、任务和 Pi Worker 适配
+│   ├── src/cairn/server/                 # API、状态、Finding 和报告
+│   └── tests/                            # 后端与 Cairn-Y 核心测试
+├── container/                            # Worker 容器
+├── docs/specs/                           # 协议与调度设计
+├── .rabbit/context/                      # 可复用项目上下文模板
+├── dispatch.yaml                         # 默认 Pi Worker 配置
+├── docker-compose.yaml                   # 完整运行环境
+└── .env.example                          # 环境变量模板
 ```
 
-## 测试
+## 设计与验证文档
 
-```bash
-cd cairn
-uv run --with pytest --with httpx python -m pytest
-```
-
-## 文档
-
-- [Rabbit 协作探索协议](docs/specs/server-protocol.md)
-- [Rabbit Dispatcher 设计](docs/specs/dispatcher-design.md)
+- [Cairn-Y 实现总结](cairn/CAIRN_Y_SUMMARY.md)
+- [测试报告](cairn/TEST_REPORT.md)
+- [Server 协议](docs/specs/server-protocol.md)
+- [Dispatcher 设计](docs/specs/dispatcher-design.md)
 
 ## 致谢
 
-Rabbit 的事实图协作思路受到 [oritera/Cairn](https://github.com/oritera/Cairn) 启发。感谢原项目对 Fact / Intent / Hint 协作探索模型和 Agent 工作流方向的开源贡献。
-
-本仓库在此基础上继续做 Rabbit 自己的产品化实现，包括 Web 体验、认证体系、Worker 工作台、模板管理、时间线、漏洞报告和本地化安全测试流程。
+Rabbit/Cairn-Y 基于 [oritera/Cairn](https://github.com/oritera/Cairn) 的事实图协作思想继续演进。感谢原项目对 Fact 图谱、Agent 协作和自动化探索方向的开源贡献。
 
 ## License
 
-本项目遵循仓库中的 [AGPL-3.0 license](LICENSE)。
+本项目遵循仓库中的 [AGPL-3.0 License](LICENSE)。

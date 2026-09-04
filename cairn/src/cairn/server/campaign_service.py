@@ -1,10 +1,4 @@
-"""Project-level campaign synthesis helpers.
-
-This service aggregates the existing fact graph, hints, open intents, and
-materialized vulnerabilities into a single deterministic summary. The goal is
-to help operators understand the current main line of a project without adding
-new autonomous execution or new persistence tables.
-"""
+"""Project-level campaign synthesis derived from native Cairn-Y state."""
 
 from __future__ import annotations
 
@@ -19,7 +13,7 @@ from cairn.server.campaign_models import (
 )
 from cairn.server.db import get_conn
 from cairn.server.text_normalization import normalize_hint_content
-from cairn.server.services import expire_reason_leases, expire_workers, get_project_or_404
+from cairn.server.services import expire_decide_leases, expire_workers, get_project_or_404
 
 
 @dataclass(frozen=True)
@@ -59,7 +53,7 @@ _NEGATIVE_FACT_PATTERNS: tuple[tuple[str, int], ...] = (
 def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
     with get_conn() as conn:
         expire_workers(conn, project_id)
-        expire_reason_leases(conn, project_id)
+        expire_decide_leases(conn, project_id)
         project = get_project_or_404(conn, project_id)
         fact_rows = conn.execute(
             "SELECT id, description FROM facts WHERE project_id = ? ORDER BY rowid",
@@ -69,12 +63,21 @@ def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
             "SELECT id, content FROM hints WHERE project_id = ? ORDER BY created_at, rowid",
             (project_id,),
         ).fetchall()
-        intent_rows = conn.execute(
+        goal_rows = conn.execute(
             """
-            SELECT id, description, concluded_at
-            FROM intents
+            SELECT id, description, parent_goal_id, status, priority
+            FROM goals
             WHERE project_id = ?
-            ORDER BY created_at, rowid
+            ORDER BY priority DESC, created_at, rowid
+            """,
+            (project_id,),
+        ).fetchall()
+        step_rows = conn.execute(
+            """
+            SELECT id, description, concluded_at, abandoned
+            FROM steps
+            WHERE project_id = ?
+            ORDER BY priority DESC, created_at, rowid
             """,
             (project_id,),
         ).fetchall()
@@ -100,10 +103,12 @@ def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
     facts = [(row["id"], str(row["description"] or "").strip()) for row in fact_rows]
     fact_by_id = {fact_id: description for fact_id, description in facts}
     hints = [(row["id"], normalize_hint_content(row["content"])) for row in hint_rows]
-    open_intents = [
+    open_steps = [
         str(row["description"] or "").strip()
-        for row in intent_rows
-        if row["concluded_at"] is None and str(row["description"] or "").strip()
+        for row in step_rows
+        if row["concluded_at"] is None
+        and not bool(row["abandoned"])
+        and str(row["description"] or "").strip()
     ]
     vulnerabilities = [
         _LoadedVulnerability(
@@ -121,8 +126,11 @@ def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
     counts = CampaignCounts(
         facts=len(facts),
         hints=len(hints),
-        intents=len(intent_rows),
-        open_intents=len(open_intents),
+        goals=len(goal_rows),
+        steps=len(step_rows),
+        open_steps=len(open_steps),
+        intents=len(step_rows),
+        open_intents=len(open_steps),
         vulnerabilities=len(vulnerabilities),
         high_value_vulnerabilities=sum(
             1
@@ -130,12 +138,15 @@ def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
             if vuln.status == "confirmed" and vuln.severity in {"critical", "high"}
         ),
     )
-    goal_status = _goal_status(project["status"], facts, vulnerabilities)
+    goal_status = _goal_status(project["status"], goal_rows, facts, open_steps, vulnerabilities)
     top_findings = _top_findings(facts, hints, vulnerabilities)
     blockers = _blockers(facts)
-    lead = _lead(project["title"], goal_status, vulnerabilities, top_findings, open_intents)
+    lead = _lead(project["title"], goal_status, vulnerabilities, top_findings, open_steps)
     summary = _summary(project["title"], project["status"], goal_status, counts, lead, blockers)
-    next_steps = _next_steps(goal_status, counts, open_intents, hints, vulnerabilities)
+    next_steps = _next_steps(goal_status, counts, open_steps, hints, vulnerabilities)
+
+    top_level_goals = [row for row in goal_rows if row["parent_goal_id"] is None]
+    goal_text = "\n".join(str(row["description"] or "").strip() for row in top_level_goals)
 
     return CampaignSynthesis(
         project_id=project["id"],
@@ -143,12 +154,13 @@ def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
         project_status=project["status"],
         goal_status=goal_status,
         origin=fact_by_id.get("origin", ""),
-        goal=fact_by_id.get("goal", ""),
+        goal=goal_text or fact_by_id.get("goal", ""),
         lead=lead,
         summary=summary,
         counts=counts,
         top_findings=top_findings,
-        open_intents=open_intents[:5],
+        open_steps=open_steps[:5],
+        open_intents=open_steps[:5],
         blockers=blockers,
         next_steps=next_steps,
     )
@@ -156,9 +168,21 @@ def build_campaign_synthesis(project_id: str) -> CampaignSynthesis:
 
 def _goal_status(
     project_status: str,
+    goals,
     facts: list[tuple[str, str]],
+    open_steps: list[str],
     vulnerabilities: list[_LoadedVulnerability],
 ) -> CampaignGoalStatus:
+    if goals:
+        if all(str(goal["status"]) == "completed" for goal in goals):
+            return "achieved"
+        if project_status == "completed":
+            return "achieved"
+        if open_steps or len(facts) > 1 or vulnerabilities:
+            return "in_progress"
+        return "blocked"
+
+    # Compatibility for pre-migration test fixtures and exported legacy data.
     text = "\n".join(description for _fact_id, description in facts)
     # Positive success signals: command-execution proof that the goal
     # (server access / whoami / ifconfig / shell) has been achieved.
@@ -307,7 +331,7 @@ def _lead(
     goal_status: CampaignGoalStatus,
     vulnerabilities: list[_LoadedVulnerability],
     top_findings: list[CampaignFinding],
-    open_intents: list[str],
+    open_steps: list[str],
 ) -> str:
     if goal_status == "achieved":
         return f"{project_name} 已具备足以证明目标达成的结果。"
@@ -320,8 +344,8 @@ def _lead(
         return f"当前主线已收敛到 {severity} 发现：{head.title}"
     if top_findings:
         return f"当前最强信号来自 {top_findings[0].source_id}：{top_findings[0].title}"
-    if open_intents:
-        return f"当前仍以 {open_intents[0]} 作为主要推进方向。"
+    if open_steps:
+        return f"当前仍以 {open_steps[0]} 作为主要推进步骤。"
     return f"{project_name} 当前缺少足够强的项目级信号。"
 
 
@@ -336,7 +360,7 @@ def _summary(
     parts = [
         f"项目 {project_name} 当前状态为 {project_status}，目标判定为 {goal_status}。",
         lead,
-        f"已累计 {counts.facts} 条事实、{counts.open_intents} 条开放意图、{counts.vulnerabilities} 条漏洞记录，其中高价值漏洞 {counts.high_value_vulnerabilities} 条。",
+        f"已累计 {counts.facts} 条事实、{counts.goals} 个目标、{counts.open_steps} 个开放步骤、{counts.vulnerabilities} 条发现记录，其中高价值发现 {counts.high_value_vulnerabilities} 条。",
     ]
     if project_status == "completed" and goal_status != "achieved":
         parts.append("项目状态虽然已标记为 completed，但当前事实中仍缺少足以直接证明目标达成的正向成功信号。")
@@ -348,7 +372,7 @@ def _summary(
 def _next_steps(
     goal_status: CampaignGoalStatus,
     counts: CampaignCounts,
-    open_intents: list[str],
+    open_steps: list[str],
     hints: list[tuple[str, str]],
     vulnerabilities: list[_LoadedVulnerability],
 ) -> list[str]:
@@ -364,10 +388,10 @@ def _next_steps(
     else:
         steps.append("优先把已有强信号拆成独立项目结论，避免零散事实长期停留在图里而无法形成主线判断。")
 
-    if open_intents:
-        steps.append("优先收敛现有开放意图，减少在同一候选方向上重复记录相似阴性结果。")
+    if open_steps:
+        steps.append("优先收敛现有开放步骤，减少在同一候选方向上重复记录相似阴性结果。")
     else:
-        steps.append("当前没有开放意图，建议围绕最强已确认事实重新提出少量互不重叠的后续方向。")
+        steps.append("当前没有开放步骤，建议由 Decide 围绕目标和最新事实生成少量互不重叠的后续步骤。")
 
     if hints:
         steps.append("对关键 hint 保留原文与原始请求细节，避免语义改写导致后续复现实验漂移。")

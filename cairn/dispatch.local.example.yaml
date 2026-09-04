@@ -1,0 +1,68 @@
+# Local execution example — workers run directly on the dispatcher host and reuse the
+# machine's already-configured claude / codex / pi CLIs. No API keys, base URLs or models
+# are configured here; each CLI uses its own host configuration and credentials.
+#
+# Usage:
+#   cp dispatch.local.example.yaml dispatch.yaml
+#   uv run --project cairn cairn serve                       # in one shell
+#   uv run --project cairn cairn dispatch --config dispatch.yaml
+#
+# Notes:
+# - Do NOT run the dispatcher via docker-compose in local mode: it must run on the host
+#   where the CLIs are installed, logged in, and on PATH. The server may still run anywhere.
+# - Local mode runs the agents with your user's permissions and no sandbox. Only use it in
+#   environments you are authorized to operate in.
+
+server: "http://127.0.0.1:8000"
+
+runtime:
+  execution: local            # run workers as host processes instead of per-project containers
+  worker_healthcheck: disabled  # no base_url to probe; startup instead checks the CLIs are on PATH
+  max_workers: 3              # all workers share this host — size to the machine
+  max_running_projects: 2
+  max_project_workers: 2
+  interval: 3
+  healthcheck_timeout: 15
+  prompt_group: "default"
+
+tasks:
+  decide:
+    timeout: 120
+    max_steps: 3
+  execute:
+    timeout: 600
+    conclude_timeout: 120
+
+# Optional. If omitted: workspace_root defaults to the dispatcher's current directory,
+# completed_action defaults to keep. Each project gets an isolated <workspace_root>/<project_id>/.
+local:
+  # workspace_root: "/data/cairn-runs"
+  completed_action: keep       # keep | remove
+
+# Extra environment variables for every local worker process.
+# common_env:
+#   # Optional: use this when `pi` on PATH is a wrapper rather than the real CLI.
+#   PI_CLI: "/absolute/path/to/pi"
+#   https_proxy: "http://127.0.0.1:7897"
+#   http_proxy: "http://127.0.0.1:7897"
+#   all_proxy: "http://127.0.0.1:7897"
+
+# No API keys needed — the host CLIs are used as-is. Per-worker `env:` overrides common_env.
+workers:
+  - name: "local-claude"
+    type: "claudecode"
+    task_types: [decide, execute]
+    max_running: 1
+    priority: 0
+
+  # - name: "local-codex"
+  #   type: "codex"
+  #   task_types: [execute]
+  #   max_running: 1
+  #   priority: 1
+
+  # - name: "local-pi"
+  #   type: "pi"
+  #   task_types: [decide]
+  #   max_running: 1
+  #   priority: 2

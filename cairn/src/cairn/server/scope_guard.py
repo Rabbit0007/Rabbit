@@ -15,11 +15,15 @@ def project_scope_inputs(
     conn: sqlite3.Connection,
     project_id: str,
 ) -> tuple[str, str, list[HintRecord]]:
-    facts = conn.execute(
-        "SELECT id, description FROM facts WHERE project_id = ? AND id IN ('origin', 'goal')",
+    origin_row = conn.execute(
+        "SELECT description FROM facts WHERE project_id = ? AND id = 'origin'",
+        (project_id,),
+    ).fetchone()
+    goal_rows = conn.execute(
+        "SELECT description FROM goals WHERE project_id = ? AND parent_goal_id IS NULL "
+        "ORDER BY priority DESC, created_at",
         (project_id,),
     ).fetchall()
-    facts_by_id = {row["id"]: row["description"] for row in facts}
     hint_rows = conn.execute(
         "SELECT id, content, creator, created_at FROM hints WHERE project_id = ? ORDER BY created_at",
         (project_id,),
@@ -33,7 +37,9 @@ def project_scope_inputs(
         )
         for row in hint_rows
     ]
-    return facts_by_id.get("origin", ""), facts_by_id.get("goal", ""), hints
+    origin = str(origin_row["description"]) if origin_row else ""
+    goal = "\n".join(str(row["description"]) for row in goal_rows)
+    return origin, goal, hints
 
 
 def evaluate_scope_for_description(

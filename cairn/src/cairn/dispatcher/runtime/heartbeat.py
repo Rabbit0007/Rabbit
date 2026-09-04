@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from cairn.dispatcher.protocol.client import ApiResult, CairnClient
-from cairn.dispatcher.runtime.process import ManagedProcess
+from cairn.dispatcher.runtime.process import ExecProcess
 
 
 LOG = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class HeartbeatLease:
         self._scope = scope
         self._worker_name = worker_name
         self._interval = interval
-        self._process: ManagedProcess | None = None
+        self._process: ExecProcess | None = None
         self._failure: HeartbeatFailure | None = None
         self._last_success_at = time.monotonic()
         self._stop = threading.Event()
@@ -40,7 +40,8 @@ class HeartbeatLease:
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     @classmethod
-    def for_step(cls, client, project_id, step_id, worker_name, interval):
+    def for_step(cls, client: CairnClient, project_id: str, step_id: str,
+                 worker_name: str, interval: int) -> "HeartbeatLease":
         return cls(
             heartbeat=lambda: client.step_heartbeat(project_id, step_id, worker_name),
             scope=f"project={project_id} step={step_id}",
@@ -49,7 +50,13 @@ class HeartbeatLease:
         )
 
     @classmethod
-    def for_decide(cls, client, project_id, worker_name, interval):
+    def for_intent(cls, client: CairnClient, project_id: str, intent_id: str,
+                   worker_name: str, interval: int) -> "HeartbeatLease":
+        return cls.for_step(client, project_id, intent_id, worker_name, interval)
+
+    @classmethod
+    def for_decide(cls, client: CairnClient, project_id: str,
+                   worker_name: str, interval: int) -> "HeartbeatLease":
         return cls(
             heartbeat=lambda: client.decide_heartbeat(project_id, worker_name),
             scope=f"project={project_id} decide",
@@ -58,35 +65,9 @@ class HeartbeatLease:
         )
 
     @classmethod
-    def for_intent(
-        cls,
-        client: CairnClient,
-        project_id: str,
-        intent_id: str,
-        worker_name: str,
-        interval: int,
-    ) -> "HeartbeatLease":
-        return cls(
-            heartbeat=lambda: client.heartbeat(project_id, intent_id, worker_name),
-            scope=f"project={project_id} intent={intent_id}",
-            worker_name=worker_name,
-            interval=interval,
-        )
-
-    @classmethod
-    def for_reason(
-        cls,
-        client: CairnClient,
-        project_id: str,
-        worker_name: str,
-        interval: int,
-    ) -> "HeartbeatLease":
-        return cls(
-            heartbeat=lambda: client.reason_heartbeat(project_id, worker_name),
-            scope=f"project={project_id} reason",
-            worker_name=worker_name,
-            interval=interval,
-        )
+    def for_reason(cls, client: CairnClient, project_id: str,
+                   worker_name: str, interval: int) -> "HeartbeatLease":
+        return cls.for_decide(client, project_id, worker_name, interval)
 
     def start(self) -> None:
         self._thread.start()
@@ -95,7 +76,7 @@ class HeartbeatLease:
         self._stop.set()
         self._thread.join(timeout=1)
 
-    def attach_process(self, process: ManagedProcess | None) -> None:
+    def attach_process(self, process: ExecProcess | None) -> None:
         with self._lock:
             self._process = process
 
@@ -115,12 +96,8 @@ class HeartbeatLease:
             elapsed = time.monotonic() - self._last_success_at
             grace_seconds = max(float(self._interval), float(self._interval * HEARTBEAT_FAILURE_GRACE_MULTIPLIER))
             LOG.warning(
-                "heartbeat transient failure scope=%s worker=%s status=%s elapsed=%.1fs grace=%.1fs",
-                self._scope,
-                self._worker_name,
-                result.status_code,
-                elapsed,
-                grace_seconds,
+                "心跳瞬时失败 scope=%s 工人=%s 状态=%s 已过=%.1f秒 宽限=%.1f秒",
+                self._scope, self._worker_name, result.status_code, elapsed, grace_seconds,
             )
             if elapsed < grace_seconds:
                 continue
@@ -130,10 +107,8 @@ class HeartbeatLease:
     def _fail(self, status_code: int | None, text: str) -> None:
         self._failure = HeartbeatFailure(status_code, text)
         LOG.warning(
-            "heartbeat failed scope=%s worker=%s status=%s",
-            self._scope,
-            self._worker_name,
-            status_code,
+            "心跳失败 scope=%s 工人=%s 状态=%s",
+            self._scope, self._worker_name, status_code,
         )
         with self._lock:
             process = self._process

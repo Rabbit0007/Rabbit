@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import threading
 
-from cairn.dispatcher.runtime.process import ManagedProcess
+from cairn.dispatcher.runtime.process import ExecProcess
 
 
 class TaskCancellation:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._process: ManagedProcess | None = None
+        self._process: ExecProcess | None = None
         self._reason: str | None = None
 
-    def attach_process(self, process: ManagedProcess | None) -> None:
+    def attach_process(self, process: ExecProcess | None) -> None:
         with self._lock:
             self._process = process
             reason = self._reason

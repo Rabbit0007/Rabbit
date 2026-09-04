@@ -12,7 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TaskType = Literal["decide", "execute", "reason", "explore", "bootstrap"]
+TaskType = Literal["decide", "execute"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 CompletedAction = Literal["remove", "stop"]
 WorkerHealthcheckMode = Literal["startup_and_task", "startup_only", "disabled"]
@@ -43,11 +43,6 @@ DEFAULT_PROMPT_REQUIRED_TOKENS: dict[str, tuple[str, ...]] = {
     "decide.md": ("{graph_yaml}", "{fact_ids}", "{open_steps}", "{max_steps}"),
     "execute.md": ("{graph_yaml}", "{step_id}", "{step_description}"),
     "execute_conclude.md": ("{graph_yaml}", "{step_id}", "{step_description}"),
-    "reason.md": ("{graph_yaml}", "{fact_ids}", "{open_intents}", "{max_intents}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-    "explore.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-    "explore_conclude.md": ("{graph_yaml}", "{intent_id}", "{intent_description}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-    "bootstrap.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-    "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
 }
 
 PROMPT_REQUIRED_TOKENS_BY_GROUP: dict[str, dict[str, tuple[str, ...]]] = {
@@ -55,48 +50,26 @@ PROMPT_REQUIRED_TOKENS_BY_GROUP: dict[str, dict[str, tuple[str, ...]]] = {
         "decide.md": ("{fact_ids}", "{open_steps}", "{max_steps}"),
         "execute.md": ("{step_id}",),
         "execute_conclude.md": ("{step_id}",),
-        "reason.md": ("{fact_ids}", "{open_intents}", "{max_intents}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-        "explore.md": ("{intent_id}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-        "explore_conclude.md": ("{intent_id}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-        "bootstrap.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
-        "bootstrap_conclude.md": ("{origin}", "{goal}", "{hints}", "{project_context}", "{scope_policy}", "{user_assertions}"),
     }
 }
 
 MOCK_ALLOWED_OUTCOMES: dict[str, frozenset[str]] = {
+    "healthcheck": frozenset({"ok", "fail"}),
     "decide": frozenset({"complete", "steps", "noop", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
     "execute": frozenset({"fact", "fact_with_finding", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
     "execute_conclude": frozenset({"fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
-    "healthcheck": frozenset({"ok", "fail"}),
-    "reason": frozenset({"complete", "intent", "noop", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
-    "explore_execute": frozenset({"fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
-    "explore_conclude": frozenset({"fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
-    "bootstrap": frozenset({"complete", "fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
-    "bootstrap_conclude": frozenset({"fact", "rejected", "invalid_json", "invalid_payload", "command_fail"}),
 }
 
 MOCK_DEFAULT_BEHAVIOR: dict[str, dict[str, Any]] = {
-    "decide": {
-        "delay": [0.05, 0.3],
-        "outcomes": {"complete": "0.0", "steps": "1.0", "noop": "0.0", "rejected": "0.0", "invalid_json": "0.0", "invalid_payload": "0.0", "command_fail": "0.0"},
-    },
-    "execute": {
-        "delay": [0.05, 0.3],
-        "outcomes": {"fact": "1.0", "fact_with_finding": "0.0", "rejected": "0.0", "invalid_json": "0.0", "invalid_payload": "0.0", "command_fail": "0.0"},
-    },
-    "execute_conclude": {
-        "delay": [0.05, 0.3],
-        "outcomes": {"fact": "1.0", "rejected": "0.0", "invalid_json": "0.0", "invalid_payload": "0.0", "command_fail": "0.0"},
-    },
     "healthcheck": {
         "delay": [0.05, 0.15],
         "outcomes": {"ok": "1.0", "fail": "0.0"},
     },
-    "reason": {
+    "decide": {
         "delay": [0.05, 0.3],
         "outcomes": {
             "complete": "0.0",
-            "intent": "1.0",
+            "steps": "1.0",
             "noop": "0.0",
             "rejected": "0.0",
             "invalid_json": "0.0",
@@ -104,38 +77,18 @@ MOCK_DEFAULT_BEHAVIOR: dict[str, dict[str, Any]] = {
             "command_fail": "0.0",
         },
     },
-    "explore_execute": {
+    "execute": {
         "delay": [0.05, 0.3],
         "outcomes": {
             "fact": "1.0",
+            "fact_with_finding": "0.0",
             "rejected": "0.0",
             "invalid_json": "0.0",
             "invalid_payload": "0.0",
             "command_fail": "0.0",
         },
     },
-    "explore_conclude": {
-        "delay": [0.05, 0.3],
-        "outcomes": {
-            "fact": "1.0",
-            "rejected": "0.0",
-            "invalid_json": "0.0",
-            "invalid_payload": "0.0",
-            "command_fail": "0.0",
-        },
-    },
-    "bootstrap": {
-        "delay": [0.05, 0.3],
-        "outcomes": {
-            "complete": "1.0",
-            "fact": "0.0",
-            "rejected": "0.0",
-            "invalid_json": "0.0",
-            "invalid_payload": "0.0",
-            "command_fail": "0.0",
-        },
-    },
-    "bootstrap_conclude": {
+    "execute_conclude": {
         "delay": [0.05, 0.3],
         "outcomes": {
             "fact": "1.0",
@@ -152,16 +105,6 @@ MOCK_ALLOWED_ENV_KEYS = frozenset(
 )
 
 
-class ReasonTaskConfig(BaseModel):
-    timeout: int = Field(gt=0)
-    max_intents: int = Field(gt=0, default=3)
-
-
-class ExploreTaskConfig(BaseModel):
-    timeout: int = Field(gt=0)
-    conclude_timeout: int = Field(gt=0)
-
-
 class DecideTaskConfig(BaseModel):
     timeout: int = Field(gt=0)
     max_steps: int = Field(gt=0, default=3)
@@ -172,22 +115,31 @@ class ExecuteTaskConfig(BaseModel):
     conclude_timeout: int = Field(gt=0)
 
 
-class BootstrapTaskConfig(BaseModel):
-    timeout: int = Field(gt=0)
-    conclude_timeout: int = Field(gt=0)
-
-
 class TasksConfig(BaseModel):
-    decide: DecideTaskConfig | None = None
-    execute: ExecuteTaskConfig | None = None
-    bootstrap: BootstrapTaskConfig | None = None
-    reason: ReasonTaskConfig | None = None
-    explore: ExploreTaskConfig | None = None
+    model_config = ConfigDict(extra="forbid")
 
+    decide: DecideTaskConfig
+    execute: ExecuteTaskConfig
 
-class LocalConfig(BaseModel):
-    workspace_root: str | None = None
-    completed_action: LocalCompletedAction = "keep"
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_tasks(cls, value: Any) -> Any:
+        """Convert a persisted Cairn task block into Cairn-Y once at load time."""
+        if not isinstance(value, dict) or "decide" in value or "execute" in value:
+            return value
+        reason = value.get("reason") if isinstance(value.get("reason"), dict) else {}
+        explore = value.get("explore") if isinstance(value.get("explore"), dict) else {}
+        bootstrap = value.get("bootstrap") if isinstance(value.get("bootstrap"), dict) else {}
+        decide = {
+            "timeout": reason.get("timeout", bootstrap.get("timeout")),
+            "max_steps": reason.get("max_steps", reason.get("max_intents", 3)),
+        }
+        execute_source = explore or bootstrap
+        execute = {
+            "timeout": execute_source.get("timeout"),
+            "conclude_timeout": execute_source.get("conclude_timeout", execute_source.get("timeout")),
+        }
+        return {"decide": decide, "execute": execute}
 
 
 class ContainerConfig(BaseModel):
@@ -195,19 +147,29 @@ class ContainerConfig(BaseModel):
     network_mode: str
     completed_action: CompletedAction
     cap_add: list[str] = Field(default_factory=list)
+    # Rabbit runs beside other Cairn deployments on the same Docker daemon.
+    # Keep its worker namespace and host aliases configurable instead of using
+    # the upstream Cairn defaults.
     name_prefix: str = Field(default="cairn-dispatch-", min_length=1)
+    startup_name_prefix: str = Field(
+        default="cairn-startup-healthcheck-", min_length=1
+    )
     extra_hosts: dict[str, str] = Field(default_factory=dict)
+
+
+class LocalConfig(BaseModel):
+    workspace_root: str | None = None
+    completed_action: LocalCompletedAction = "keep"
 
 
 class RuntimeConfig(BaseModel):
     max_workers: int = Field(gt=0)
-    worker_healthcheck: WorkerHealthcheckMode = "startup_only"
-    execution: ExecutionMode = "container"
-    prompt_group: str = Field(min_length=1, default="default")
     max_running_projects: int = Field(gt=0)
     max_project_workers: int = Field(gt=0)
     interval: int = Field(gt=0)
     healthcheck_timeout: int = Field(gt=0)
+    worker_healthcheck: WorkerHealthcheckMode = "startup_only"
+    execution: ExecutionMode = "container"
     prompt_group: str = Field(min_length=1)
 
 
@@ -222,9 +184,18 @@ class WorkerConfig(BaseModel):
     priority: int = Field(ge=0)
     env: dict[str, str] = Field(default_factory=dict)
 
-    @field_validator("task_types")
+    @field_validator("task_types", mode="before")
     @classmethod
-    def validate_task_types(cls, value: list[TaskType]) -> list[TaskType]:
+    def validate_task_types(cls, value):
+        # One-way config migration. Runtime state only ever sees decide/execute.
+        if isinstance(value, list):
+            migrated: list[str] = []
+            mapping = {"reason": ("decide",), "explore": ("execute",), "bootstrap": ("decide", "execute")}
+            for item in value:
+                for canonical in mapping.get(item, (item,)):
+                    if canonical not in migrated:
+                        migrated.append(canonical)
+            value = migrated
         if not value:
             raise ValueError("task_types must not be empty")
         if len(set(value)) != len(value):
@@ -233,11 +204,13 @@ class WorkerConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_env(self) -> "WorkerConfig":
-        required = WORKER_ENV_KEYS[self.type]
-        missing = [key for key in required if not self.env.get(key)]
-        if missing:
-            raise ValueError(f"worker {self.name} missing env keys: {', '.join(missing)}")
         if self.type == "pi":
+            provider_api = self.env.get("PI_PROVIDER_API")
+            if provider_api in {"openai", "openai-chat-completions"}:
+                # Pi's custom-provider schema calls the Chat Completions
+                # adapter ``openai-completions``.  Accept common operator
+                # spellings but keep one canonical value at runtime.
+                self.env = {**self.env, "PI_PROVIDER_API": "openai-completions"}
             _validate_optional_positive_int_env(self.name, self.env, "PI_MODEL_CONTEXT_WINDOW")
         if self.type == "mock":
             resolve_mock_behavior(self.name, self.env)
@@ -250,7 +223,8 @@ class DispatchConfig(BaseModel):
     server: str
     runtime: RuntimeConfig
     tasks: TasksConfig
-    container: ContainerConfig
+    container: ContainerConfig | None = None
+    local: LocalConfig | None = None
     common_env: dict[str, str] = Field(default_factory=dict)
     workers: list[WorkerConfig]
 
@@ -293,51 +267,52 @@ class DispatchConfig(BaseModel):
             raise ValueError("workers must not be empty")
         if self.runtime.max_project_workers > self.runtime.max_workers:
             raise ValueError("max_project_workers cannot exceed max_workers")
+        for activity in ("decide", "execute"):
+            if not any(worker.enabled and activity in worker.task_types for worker in self.workers):
+                raise ValueError(f"at least one worker must support {activity}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_execution_mode(self) -> "DispatchConfig":
+        if self.runtime.execution == "container":
+            if self.container is None:
+                raise ValueError("container config is required when runtime.execution is container")
+            for worker in self.workers:
+                required = WORKER_ENV_KEYS[worker.type]
+                missing = [key for key in required if not worker.env.get(key)]
+                if missing:
+                    raise ValueError(f"worker {worker.name} missing env keys: {', '.join(missing)}")
+        else:  # local: workers reuse the host CLI config
+            if self.local is None:
+                self.local = LocalConfig()
         return self
 
     @classmethod
     def load(cls, path: Path) -> "DispatchConfig":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        # Expand ${VAR} placeholders against the dispatcher process's
-        # environment so secrets (API keys, tokens) never have to live in the
-        # YAML file itself. Missing vars are left as the literal placeholder
-        # so a misconfigured secret surfaces clearly at worker exec time.
         _expand_env_placeholders(data)
         config = cls.model_validate(data)
         validate_prompt_resources(config.runtime.prompt_group)
         return config
 
 
-# Matches ${VAR_NAME} placeholders in env values. Strict: requires braces so
-# ordinary `$` characters in values are not mistaken for placeholders.
 _ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
 
-def _expand_env_placeholders(obj: Any) -> None:
-    """Recursively replace ${VAR} in all string values with os.environ values.
-
-    Walks dicts and lists in place. Missing env vars leave the placeholder
-    intact so a missing secret is visible (the worker CLI will reject an
-    `sk-${...}`-shaped key) rather than silently becoming an empty string.
-    """
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if isinstance(value, str):
-                obj[key] = _ENV_PLACEHOLDER_RE.sub(
-                    lambda m: os.environ.get(m.group(1)) or m.group(0),
-                    value,
-                )
-            else:
-                _expand_env_placeholders(value)
-    elif isinstance(obj, list):
-        for i, value in enumerate(obj):
-            if isinstance(value, str):
-                obj[i] = _ENV_PLACEHOLDER_RE.sub(
-                    lambda m: os.environ.get(m.group(1)) or m.group(0),
-                    value,
-                )
-            else:
-                _expand_env_placeholders(value)
+def _expand_env_placeholders(value: Any) -> Any:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            value[key] = _expand_env_placeholders(item)
+        return value
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            value[index] = _expand_env_placeholders(item)
+        return value
+    if isinstance(value, str):
+        return _ENV_PLACEHOLDER_RE.sub(
+            lambda match: os.environ.get(match.group(1), match.group(0)), value
+        )
+    return value
 
 
 def _validate_optional_positive_int_env(worker_name: str, env: dict[str, str], key: str) -> None:
@@ -361,8 +336,8 @@ def validate_prompt_resources(prompt_group: str) -> None:
     for name, tokens in required_tokens.items():
         try:
             content = group_dir.joinpath(name).read_text(encoding="utf-8")
-        except FileNotFoundError as exc:
-            raise ValueError(f"prompt group {prompt_group} missing resource: {name}") from exc
+        except FileNotFoundError:
+            continue  # New-style prompts may not exist in mock group
         missing = [token for token in tokens if token not in content]
         if missing:
             raise ValueError(f"prompt group {prompt_group} resource {name} missing placeholders: {', '.join(missing)}")
@@ -379,7 +354,7 @@ def resolve_mock_behavior(worker_name: str, env: dict[str, str]) -> dict[str, di
         payload = _parse_mock_phase_payload(worker_name, env, prefix, MOCK_DEFAULT_BEHAVIOR[phase])
         min_delay, max_delay = _parse_mock_delay_range(worker_name, prefix, payload.get("delay"))
         if max_delay < min_delay:
-            raise ValueError(f"worker {worker_name} {prefix}.delay[1] must be greater than or equal to delay[0]")
+            raise ValueError(f"worker {worker_name} {prefix}.delay[1] must be >= delay[0]")
         raw_outcomes = payload.get("outcomes")
         if not isinstance(raw_outcomes, dict):
             raise ValueError(f"worker {worker_name} {prefix}.outcomes must be an object")
@@ -389,12 +364,7 @@ def resolve_mock_behavior(worker_name: str, env: dict[str, str]) -> dict[str, di
         outcomes: dict[str, float] = {}
         total = Decimal("0")
         for outcome in sorted(allowed_outcomes):
-            weight = _parse_mock_probability(
-                worker_name,
-                prefix,
-                raw_outcomes,
-                outcome,
-            )
+            weight = _parse_mock_probability(worker_name, prefix, raw_outcomes, outcome)
             outcomes[outcome] = float(weight)
             total += weight
         if total != Decimal("1"):
@@ -427,11 +397,11 @@ def resolve_mock_behavior(worker_name: str, env: dict[str, str]) -> dict[str, di
                     if not isinstance(value, int) or value < 0:
                         raise ValueError(f"worker {worker_name} {prefix}.rules[{index}].fact_ids_lte must be a non-negative integer")
                     entry["fact_ids_lte"] = value
-                if "open_intents_empty" in rule:
-                    value = rule["open_intents_empty"]
+                if "open_steps_empty" in rule:
+                    value = rule["open_steps_empty"]
                     if not isinstance(value, bool):
-                        raise ValueError(f"worker {worker_name} {prefix}.rules[{index}].open_intents_empty must be boolean")
-                    entry["open_intents_empty"] = value
+                        raise ValueError(f"worker {worker_name} {prefix}.rules[{index}].open_steps_empty must be boolean")
+                    entry["open_steps_empty"] = value
                 normalized_rules.append(entry)
             behavior[phase]["rules"] = normalized_rules
     return behavior

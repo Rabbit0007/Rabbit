@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     fact_id TEXT NOT NULL,
+    finding_id TEXT,
     title TEXT NOT NULL,
     description TEXT NOT NULL,
     severity TEXT NOT NULL CHECK(severity IN ('critical', 'high', 'medium', 'low')),
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     proof_packets_json TEXT NOT NULL DEFAULT '[]',
     process_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('confirmed', 'ignored')),
-    UNIQUE(project_id, fact_id)
+    UNIQUE(project_id, finding_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS worker_task_history (
     worker_name TEXT NOT NULL,
     project_id TEXT NOT NULL,
     task_type TEXT NOT NULL,
+    step_id TEXT,
     intent_id TEXT,
     started_at TEXT NOT NULL,
     completed_at TEXT,
@@ -161,6 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_read
 """
 
 VULNERABILITY_COLUMNS: dict[str, str] = {
+    "finding_id": "TEXT",
     "source_intent_id": "TEXT",
     "source_intent_description": "TEXT",
     "source_worker": "TEXT",
@@ -169,6 +172,12 @@ VULNERABILITY_COLUMNS: dict[str, str] = {
     "proof_packets_json": "TEXT NOT NULL DEFAULT '[]'",
     "process_json": "TEXT NOT NULL DEFAULT '[]'",
     "status": "TEXT NOT NULL DEFAULT 'confirmed'",
+}
+
+WORKER_HISTORY_COLUMNS: dict[str, str] = {
+    "step_id": "TEXT",
+    # Retained only so older Rabbit builds can still read migrated databases.
+    "intent_id": "TEXT",
 }
 
 
@@ -180,6 +189,79 @@ def _ensure_vulnerability_columns(conn) -> None:
     for name, ddl in VULNERABILITY_COLUMNS.items():
         if name not in existing:
             conn.execute(f"ALTER TABLE vulnerabilities ADD COLUMN {name} {ddl}")
+
+
+def _ensure_worker_history_columns(conn) -> None:
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(worker_task_history)").fetchall()
+    }
+    for name, ddl in WORKER_HISTORY_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE worker_task_history ADD COLUMN {name} {ddl}")
+    conn.execute(
+        "UPDATE worker_task_history SET step_id = intent_id "
+        "WHERE step_id IS NULL AND intent_id IS NOT NULL"
+    )
+
+
+def _ensure_finding_identity(conn) -> None:
+    """Remove Rabbit's old one-vulnerability-per-Fact projection constraint.
+
+    Cairn-Y Findings are independent artifacts, so two Findings may reference
+    the same Fact. SQLite cannot drop a table-level UNIQUE constraint in place;
+    rebuild only databases that still carry the legacy identity.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vulnerabilities'"
+    ).fetchone()
+    sql = "" if row is None else str(row["sql"] or "").replace(" ", "").lower()
+    if "unique(project_id,fact_id)" not in sql:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_vulnerabilities_finding "
+            "ON vulnerabilities(project_id, finding_id)"
+        )
+        return
+
+    conn.execute("ALTER TABLE vulnerabilities RENAME TO vulnerabilities_legacy_identity")
+    conn.execute(
+        """
+        CREATE TABLE vulnerabilities (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            fact_id TEXT NOT NULL,
+            finding_id TEXT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK(severity IN ('critical', 'high', 'medium', 'low')),
+            discovered_at TEXT NOT NULL,
+            source_intent_id TEXT,
+            source_intent_description TEXT,
+            source_worker TEXT,
+            source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            proof_packets_json TEXT NOT NULL DEFAULT '[]',
+            process_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('confirmed', 'ignored')),
+            UNIQUE(project_id, finding_id)
+        )
+        """
+    )
+    columns = (
+        "id, project_id, fact_id, finding_id, title, description, severity, discovered_at, "
+        "source_intent_id, source_intent_description, source_worker, source_fact_ids_json, "
+        "evidence_json, proof_packets_json, process_json, status"
+    )
+    conn.execute(
+        f"INSERT INTO vulnerabilities ({columns}) SELECT {columns} FROM vulnerabilities_legacy_identity"
+    )
+    conn.execute("DROP TABLE vulnerabilities_legacy_identity")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project ON vulnerabilities(project_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity)")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vulnerabilities_finding "
+        "ON vulnerabilities(project_id, finding_id)"
+    )
 
 
 def configure_product_db() -> None:
@@ -195,3 +277,12 @@ def configure_product_db() -> None:
     with db.get_conn() as conn:
         conn.executescript(PRODUCT_SCHEMA)
         _ensure_vulnerability_columns(conn)
+        _ensure_worker_history_columns(conn)
+        _ensure_finding_identity(conn)
+        from cairn.server.finding_projection import (
+            migrate_legacy_vulnerabilities,
+            sync_all_findings,
+        )
+
+        migrate_legacy_vulnerabilities(conn)
+        sync_all_findings(conn)

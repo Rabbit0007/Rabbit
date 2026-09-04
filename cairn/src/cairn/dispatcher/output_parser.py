@@ -38,9 +38,12 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _candidate_segments(text: str) -> list[str]:
-    segments = [text.strip()]
-    segments.extend(match.group(1).strip() for match in FENCED_BLOCK_RE.finditer(text))
-    return segments
+    # Models occasionally prepend a prose explanation even when instructed to
+    # return JSON only.  That prose may itself contain valid-looking objects
+    # such as ``Scope Policy={}``.  Prefer the last fenced response block so a
+    # stray object in the explanation cannot shadow the actual payload.
+    fenced = [match.group(1).strip() for match in FENCED_BLOCK_RE.finditer(text)]
+    return [*reversed(fenced), text.strip()]
 
 
 def _object_start_positions(text: str) -> list[int]:

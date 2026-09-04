@@ -16,9 +16,9 @@ Normal return (fact only):
 {"accepted": true, "data": {"description": "..."}}
 ```
 
-Return with a security finding:
+Return with a durable structured Finding discovered during the search:
 ```json
-{"accepted": true, "data": {"description": "...", "finding": {"title": "SQL Injection in /api/login", "severity": "high", "description": "..."}}}
+{"accepted": true, "data": {"description": "...", "finding": {"kind": "security_vulnerability", "title": "SQL Injection in /api/login", "severity": "high", "description": "...", "data": {"endpoint": "/api/login"}}}}
 ```
 
 # Rules
@@ -26,7 +26,7 @@ Return with a security finding:
 - If you later receive a conclude-phase instruction in the same session, that newer conclude instruction overrides this exploration instruction immediately. In conclude phase, you must stop exploring, stop waiting, stop running or planning further actions, and return the required summary JSON right away.
 - `description` must clearly state the confirmed key objective results. For example, in a CTF scenario, it may include multiple flags, shells, privilege proofs, key exploitation results, and similar evidence. Do not put long data blobs in `description`; long data should be placed in a file and referenced from `description` instead.
 - `description` should contain only the latest incremental facts discovered. Do not repeat information already present in the graph snapshot, and do not include redundant details that do not help advance the goal.
-- If you discover a security vulnerability (SQL injection, XSS, exposed credentials, etc.), include it as a `finding` with title, severity (critical/high/medium/low/info), and a brief description.
+- If the search produces a durable result worth collecting independently of final Goal completion, include it as a `finding`. Use a concise `kind`, `title`, `description`, optional severity (critical/high/medium/low/info), and optional JSON-object `data`. Findings are generic search products; security vulnerabilities are one possible kind.
 
 # Context
 ## Graph

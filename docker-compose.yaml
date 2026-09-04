@@ -28,7 +28,9 @@ services:
       CAIRN_DISPATCHER_INTERNAL_URL: "http://rabbit-pentest-dispatcher:8989"
       CAIRN_REPORT_COMPOSER_CONFIG_PATH: "/cairn/dispatch.yaml"
       CAIRN_PROJECT_CONTEXT_ROOT: "/cairn/.rabbit/context"
-      CAIRN_ALLOW_REGISTRATION: "0"
+      # A freshly reset local installation has no account, so registration
+      # must remain available for the owner to create the first login.
+      CAIRN_ALLOW_REGISTRATION: "1"
       CAIRN_ENABLE_API_DOCS: "0"
       # Timeout (seconds) for the longer-running worker connectivity test and
       # config read/write proxy calls to the dispatcher internal API. Independent
@@ -102,5 +104,4 @@ services:
 
 volumes:
   rabbit-pentest-artifacts:
-    external: true
     name: rabbit-pentest-artifacts

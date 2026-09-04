@@ -5,7 +5,7 @@ rather than a ``services/templates.py`` package member. The existing
 ``cairn.server.services`` is a single module (``services.py``) imported across
 the server (``from cairn.server.services import ...``); introducing a
 ``services/`` package would shadow that module and break those core imports. So
-this additive service lives alongside ``vulnerability_extraction.py`` and
+this additive service lives alongside ``finding_projection.py`` and
 ``templates_models.py`` instead, mirroring the convention already established in
 this package.
 

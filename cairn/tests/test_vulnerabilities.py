@@ -1,18 +1,15 @@
-"""Unit tests for the vulnerability extraction service and router (task 4.6).
+"""Product tests for native Finding projection and vulnerability reports.
 
-These tests are additive and exercise:
-
-* :mod:`cairn.server.vulnerability_extraction` -- severity pattern matching and
-  the ``scan_project_facts`` upsert/reconcile behaviour.
-* :mod:`cairn.server.routers.vulnerabilities` -- the list, summary, export and
-  refresh endpoints, including filter combinations and export edge cases.
+Findings are the source of truth.  These tests seed explicit Cairn-Y Findings
+and exercise the read-only vulnerability projection, filters, exports and
+refresh behaviour.
 
 The vulnerabilities router carries no built-in auth dependency (in the real app,
 auth is applied via ``app.include_router(..., dependencies=[Depends(require_auth)])``
 in ``app.py``). Mounting only the router in a dedicated test app therefore needs
 no authentication, which keeps these tests focused on the router logic itself.
 
-Test data (projects + facts) is created with direct inserts through
+Test data (projects + facts + findings) is created with direct inserts through
 ``cairn.server.db.get_conn()``. The shared ``temp_db`` fixture from
 ``conftest.py`` provides a fresh, isolated SQLite database per test (core +
 auth + product schemas configured).
@@ -31,12 +28,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cairn.server import db
-from cairn.server.vulnerability_extraction import (
-    categorize_severity,
-    extract_vulnerabilities,
-    scan_all_projects,
-    scan_project_facts,
-)
+from cairn.server.finding_projection import sync_project_findings
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -87,8 +79,8 @@ def _insert_fact(fact_id: str, project_id: str, description: str) -> None:
         )
 
 
-# Representative fact descriptions for each severity level. The strings are
-# chosen to match exactly one severity category in the extraction patterns.
+# Representative descriptions used as explicit Finding content.  Their text has
+# no classification side effects; severity is supplied by Execute in the Finding.
 CRITICAL_DESC = "SQL injection found in the login form allowing data dump"
 HIGH_DESC = "Reflected XSS in the search parameter of the results page"
 MEDIUM_DESC = "Information disclosure via verbose API responses"
@@ -96,285 +88,46 @@ LOW_DESC = "Missing security header: X-Frame-Options not set"
 BENIGN_DESC = "The homepage renders a static marketing banner"
 
 
-# ---------------------------------------------------------------------------
-# Extraction service: severity pattern matching (requirements 6.1, 6.2)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("description", "expected"),
-    [
-        (CRITICAL_DESC, "critical"),
-        ("Remote code execution via deserialization", "critical"),
-        ("Authentication bypass on the admin panel", "critical"),
-        (HIGH_DESC, "high"),
-        ("Server-side request forgery against metadata endpoint", "high"),
-        ("Path traversal allows reading /etc/passwd", "high"),
-        (MEDIUM_DESC, "medium"),
-        ("CSRF token missing on the settings form", "medium"),
-        (LOW_DESC, "low"),
-        ("Verbose error message leaks framework version", "low"),
-    ],
-)
-def test_categorize_severity_matches_expected_level(description, expected):
-    """Each pattern category resolves to its documented severity level."""
-    assert categorize_severity(description) == expected
-
-
-def test_categorize_severity_returns_none_for_benign_description():
-    """A description with no security-relevant keyword yields no severity."""
-    assert categorize_severity(BENIGN_DESC) is None
-
-
-def test_categorize_severity_empty_string_returns_none():
-    """An empty description never produces a severity."""
-    assert categorize_severity("") is None
-
-
-def test_categorize_severity_picks_highest_when_multiple_match():
-    """A description touching multiple categories is classified at its most
-    severe level (critical wins over a medium 'information disclosure')."""
-    description = "SQL injection leading to information disclosure of all users"
-    assert categorize_severity(description) == "critical"
-
-
-def test_categorize_severity_case_insensitive():
-    """Pattern matching ignores case."""
-    assert categorize_severity("SQL INJECTION in the API") == "critical"
-
-
-def test_extract_vulnerabilities_returns_single_with_title_and_severity():
-    """A matching description yields exactly one vulnerability with a non-empty
-    title and the correct severity."""
-    extracted = extract_vulnerabilities(CRITICAL_DESC)
-    assert len(extracted) == 1
-    vuln = extracted[0]
-    assert vuln.severity == "critical"
-    assert vuln.title
-    assert "SQL 注入" in vuln.description
-
-
-def test_extract_vulnerabilities_empty_for_benign_description():
-    """A non-matching description yields no vulnerabilities."""
-    assert extract_vulnerabilities(BENIGN_DESC) == []
-
-
-@pytest.mark.parametrize(
-    "description",
-    [
-        (
-            "S2-045 (CVE-2017-5638)：已测试 Content-Type header 注入检测，"
-            "未触发（不脆弱），无命令执行。"
-        ),
-        (
-            "SQL 注入测试：username 参数响应与正常请求完全一致，"
-            "无 SQL 错误回显，无响应差异，无可利用的注入迹象。"
-        ),
-        "CVE-2023-46604 可能存在，应优先尝试利用。",
-        (
-            "Ghostcat（CVE-2020-1938）攻击路径验证完成，结论：不可利用。"
-            "端口 8009 返回 HTTP 400，无法读取 /WEB-INF/web.xml。"
-        ),
-        (
-            "DSS Web 漏洞（CNVD-2017-06001 SQLi）已测试，"
-            "目标路径 /portal/attachment_downloadByUrlAtt.action 不存在，扫描未命中。"
-        ),
-        "攻击面极为有限：无表单可注入，无 API 可未授权访问，所有路径均需有效会话。",
-        "结论：HTTPS 8443 未提供任何认证绕过、未授权端点或更宽松的会话管理机制。",
-    ],
-)
-def test_extract_vulnerabilities_ignores_failed_or_speculative_findings(description):
-    """Failed, non-applicable, and speculative tests are not report findings."""
-    assert extract_vulnerabilities(description) == []
-
-
-def test_extract_vulnerabilities_keeps_confirmed_unauthorized_api():
-    """A concrete, positively validated unauthorized API remains reportable."""
-    description = (
-        "突破性发现：/config/realtime_getStatusJson.action 是未授权 JSON API，"
-        "无需认证直接返回 JSON 系统状态数据。"
-        "该端点未获取到凭证、源码或 RCE 路径。"
-    )
-
-    extracted = extract_vulnerabilities(description)
-
-    assert len(extracted) == 1
-    assert extracted[0].severity == "high"
-
-
-def test_extract_vulnerabilities_keeps_confirmed_cross_job_read():
-    """A confirmed cross-job read with concrete body evidence is reportable."""
-    description = (
-        "已确认跨作业未授权读取真实存在：请求 "
-        "https://yanglab.qd.sdu.edu.cn/trRosetta/output/TR198507/../TR198506/seq.fasta "
-        "返回 200，正文为 \"ATMNALAAN TER END\"，"
-        "证明攻击者无需认证即可读取他人作业结果。"
-    )
-
-    extracted = extract_vulnerabilities(description)
-
-    assert len(extracted) == 1
-    assert extracted[0].severity == "high"
-    assert any("seq.fasta" in item or "200" in item for item in extracted[0].evidence)
-
-
-def test_extract_vulnerabilities_keeps_confirmed_archive_disclosure():
-    """A confirmed archive download via traversal is preserved as a finding."""
-    description = (
-        "trRosetta 的 ../ 越权读取可直接命中结果归档包本身：访问 "
-        "https://yanglab.qd.sdu.edu.cn/trRosetta/output/TR198507/../TR198500/TR198500_results.tar.bz2 "
-        "返回 200、Content-Type: application/x-bzip2、长度 970509。"
-        "进一步解包确认归档内包含 model1.pdb、model2.pdb 与 seq.a3m，"
-        "证明越权读取链已可批量打包获取他人完整结果集。"
-    )
-
-    extracted = extract_vulnerabilities(description)
-
-    assert len(extracted) == 1
-    assert extracted[0].severity == "high"
-    assert any("Content-Type" in item or "解包确认" in item for item in extracted[0].evidence)
-
-
-def test_extract_vulnerabilities_still_ignores_unconfirmed_injection_candidate():
-    """A candidate injection path with 200 responses but no execution proof stays unconfirmed."""
-    description = (
-        "在保持合法 zip 主流程可达的前提下，将 payload 放入 email 与 zip 成员名后，"
-        "/cgi-bin/mTM-align/mTMalign_upload_tar.py 仍稳定返回 200 的正常提交页，"
-        "且对应结果页均可访问。尽管这些位置可进入主流程，但未观察到任何真实执行证据，"
-        "未发现 uid=、www-data、whoami、id 输出，也未出现异常副作用。"
-    )
-
-    assert extract_vulnerabilities(description) == []
-
-
-# ---------------------------------------------------------------------------
-# Extraction service: scan_project_facts upsert / reconcile (req 6.4, 6.5)
-# ---------------------------------------------------------------------------
+def _insert_finding(
+    finding_id: str,
+    project_id: str,
+    fact_id: str,
+    description: str,
+    severity: str,
+    *,
+    title: str | None = None,
+    data: dict | None = None,
+) -> None:
+    """Insert one Execute-owned Finding and refresh its product projection."""
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO findings "
+            "(id, project_id, title, description, severity, kind, data_json, fact_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'security_vulnerability', ?, ?, ?)",
+            (
+                finding_id,
+                project_id,
+                title or f"Finding {finding_id}",
+                description,
+                severity,
+                json.dumps(data or {}, ensure_ascii=False),
+                fact_id,
+                "2024-01-01T00:00:01Z",
+            ),
+        )
+        sync_project_findings(conn, project_id)
 
 
 def _count_vulns(project_id: str | None = None) -> int:
     with db.get_conn() as conn:
         if project_id is None:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM vulnerabilities"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) AS n FROM vulnerabilities").fetchone()
         else:
             row = conn.execute(
                 "SELECT COUNT(*) AS n FROM vulnerabilities WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
     return int(row["n"])
-
-
-def test_scan_project_facts_extracts_matching_facts(temp_db):
-    """Scanning a project materializes one vulnerability per matching fact and
-    skips benign facts."""
-    _insert_project("p1", "Project One")
-    _insert_fact("f1", "p1", CRITICAL_DESC)
-    _insert_fact("f2", "p1", HIGH_DESC)
-    _insert_fact("f3", "p1", BENIGN_DESC)
-
-    count = scan_project_facts("p1")
-
-    assert count == 2
-    assert _count_vulns("p1") == 2
-
-
-def test_scan_project_facts_no_duplicates_on_rescan(temp_db):
-    """Re-scanning the same facts upserts rather than inserting duplicates."""
-    _insert_project("p1", "Project One")
-    _insert_fact("f1", "p1", CRITICAL_DESC)
-    _insert_fact("f2", "p1", HIGH_DESC)
-
-    first = scan_project_facts("p1")
-    second = scan_project_facts("p1")
-
-    assert first == 2
-    assert second == 2
-    assert _count_vulns("p1") == 2
-
-
-def test_scan_project_facts_preserves_discovered_at_on_rescan(temp_db):
-    """The original discovery time is stable across re-scans (upsert preserves
-    discovered_at)."""
-    _insert_project("p1", "Project One")
-    _insert_fact("f1", "p1", CRITICAL_DESC)
-
-    scan_project_facts("p1")
-    with db.get_conn() as conn:
-        first_ts = conn.execute(
-            "SELECT discovered_at FROM vulnerabilities WHERE fact_id = 'f1'"
-        ).fetchone()["discovered_at"]
-
-    scan_project_facts("p1")
-    with db.get_conn() as conn:
-        second_ts = conn.execute(
-            "SELECT discovered_at FROM vulnerabilities WHERE fact_id = 'f1'"
-        ).fetchone()["discovered_at"]
-
-    assert first_ts == second_ts
-
-
-def test_scan_project_facts_removes_stale_vulnerabilities(temp_db):
-    """A fact whose description no longer matches is removed from the table."""
-    _insert_project("p1", "Project One")
-    _insert_fact("f1", "p1", CRITICAL_DESC)
-    scan_project_facts("p1")
-    assert _count_vulns("p1") == 1
-
-    # Update the fact so it no longer matches any severity pattern.
-    with db.get_conn() as conn:
-        conn.execute(
-            "UPDATE facts SET description = ? WHERE id = 'f1'",
-            (BENIGN_DESC,),
-        )
-
-    scan_project_facts("p1")
-    assert _count_vulns("p1") == 0
-
-
-def test_scan_project_facts_ignores_bare_unsupported_claim(temp_db):
-    """A one-line vulnerability claim without reproducible evidence is skipped."""
-    _insert_project("p1", "Project One")
-    _insert_fact("f1", "p1", "确认存在 SQL 注入漏洞。")
-
-    assert scan_project_facts("p1") == 0
-    assert _count_vulns("p1") == 0
-
-
-def test_scan_project_facts_removes_explicitly_corrected_fact(temp_db):
-    """Later append-only facts can explicitly retract an earlier false finding."""
-    _insert_project("p1", "Project One")
-    _insert_fact(
-        "f1",
-        "p1",
-        "确认存在 Ghostcat CVE-2020-1938 本地文件包含漏洞，"
-        "目标端口 8009 可读取 /WEB-INF/web.xml。",
-    )
-    _insert_fact(
-        "f2",
-        "p1",
-        "修正此前事实 f1 中的错误结论：端口 8009 为 HTTP Connector，"
-        "Ghostcat CVE-2020-1938 不可利用。",
-    )
-
-    assert scan_project_facts("p1") == 0
-    assert _count_vulns("p1") == 0
-
-
-def test_scan_all_projects_scans_every_project(temp_db):
-    """scan_all_projects reconciles vulnerabilities across all projects."""
-    _insert_project("p1", "Project One")
-    _insert_project("p2", "Project Two")
-    _insert_fact("f1", "p1", CRITICAL_DESC)
-    _insert_fact("f2", "p2", HIGH_DESC)
-    _insert_fact("f3", "p2", MEDIUM_DESC)
-
-    total = scan_all_projects()
-
-    assert total == 3
-    assert _count_vulns("p1") == 1
-    assert _count_vulns("p2") == 2
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +137,7 @@ def test_scan_all_projects_scans_every_project(temp_db):
 
 @pytest.fixture
 def populated(temp_db):
-    """Create two projects with a spread of severities and scan them.
+    """Create two projects with a spread of explicit Finding severities.
 
     Project ``p1`` (Alpha): critical + high + medium + benign.
     Project ``p2`` (Beta):  high + low.
@@ -403,7 +156,11 @@ def populated(temp_db):
     _insert_fact("f5", "p2", HIGH_DESC)
     _insert_fact("f6", "p2", LOW_DESC)
 
-    scan_all_projects()
+    _insert_finding("finding-1", "p1", "f1", CRITICAL_DESC, "critical")
+    _insert_finding("finding-2", "p1", "f2", HIGH_DESC, "high")
+    _insert_finding("finding-3", "p1", "f3", MEDIUM_DESC, "medium")
+    _insert_finding("finding-5", "p2", "f5", HIGH_DESC, "high")
+    _insert_finding("finding-6", "p2", "f6", LOW_DESC, "low")
 
     return {
         "total": 5,
@@ -512,7 +269,14 @@ def test_list_merges_same_cve_and_keeps_final_confirmation(client, temp_db):
         "利用链涉及 ysoserial 载荷；CommonsCollections 载荷被用于验证；"
         "whoami output: root。id output: uid=0(root)。",
     )
-    scan_project_facts("p1")
+    _insert_finding(
+        "finding-cve-2017-12149",
+        "p1",
+        "f014",
+        "CVE-2017-12149 JBoss 远程命令执行已成功验证；whoami output: root；id output: uid=0(root)。",
+        "critical",
+        title="CVE-2017-12149 远程命令执行",
+    )
 
     resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
     assert resp.status_code == 200
@@ -539,7 +303,14 @@ def test_proof_packet_is_not_reconstructed_from_narrative_fact(client, temp_db):
         "确认存在 SQL 注入漏洞：GET /app/item?id=1 请求中，"
         "id=1' UNION SELECT version(),user()--+ 可回显 MySQL 版本和 root@localhost 用户。",
     )
-    scan_project_facts("p1")
+    _insert_finding(
+        "finding-sqli",
+        "p1",
+        "f001",
+        "GET /app/item?id=1 的 SQL 注入已确认，可回显数据库版本与当前用户。",
+        "critical",
+        title="SQL 注入",
+    )
 
     resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
 
@@ -559,7 +330,14 @@ def test_multiple_narrative_endpoints_do_not_create_fake_packets(client, temp_db
         "statusName=systemDiskStatus 无需认证直接返回 JSON 系统状态数据。\n"
         "- /config/realtime_loginKeeper.action 使用 GET/POST 均返回 true，无需认证。",
     )
-    scan_project_facts("p1")
+    _insert_finding(
+        "finding-api",
+        "p1",
+        "f001",
+        "两个 JSON API 已确认无需认证即可读取状态数据。",
+        "high",
+        title="未授权 API",
+    )
 
     resp = client.get("/api/vulnerabilities", params={"project_id": "p1"})
 
@@ -571,7 +349,8 @@ def test_batch_status_update_marks_multiple_merged_vulnerabilities(client, temp_
     _insert_project("p1", "Project One")
     _insert_fact("f1", "p1", CRITICAL_DESC)
     _insert_fact("f2", "p1", HIGH_DESC)
-    scan_project_facts("p1")
+    _insert_finding("finding-critical", "p1", "f1", CRITICAL_DESC, "critical")
+    _insert_finding("finding-high", "p1", "f2", HIGH_DESC, "high")
 
     listed = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()
     ids = [item["id"] for item in listed]
@@ -589,7 +368,7 @@ def test_batch_status_update_marks_multiple_merged_vulnerabilities(client, temp_
 def test_batch_status_update_reports_missing_ids_but_updates_existing(client, temp_db):
     _insert_project("p1", "Project One")
     _insert_fact("f1", "p1", CRITICAL_DESC)
-    scan_project_facts("p1")
+    _insert_finding("finding-critical", "p1", "f1", CRITICAL_DESC, "critical")
 
     listed = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()
     vuln_id = listed[0]["id"]
@@ -780,7 +559,15 @@ def test_vulnerability_report_endpoint_returns_structured_template_report(client
         "确认存在 SQL 注入漏洞：GET /app/item?id=1 请求中，"
         "id=1' UNION SELECT version(),user()--+ 可回显 MySQL 版本和 root@localhost 用户。",
     )
-    scan_project_facts("p1")
+    _insert_finding(
+        "finding-sqli",
+        "p1",
+        "f001",
+        "确认 GET /app/item?id=1 存在 SQL 注入，可回显 MySQL 版本和 root@localhost 用户。",
+        "critical",
+        title="SQL 注入",
+        data={"location": "GET /app/item?id=1", "proof": "回显 MySQL 版本与当前用户"},
+    )
 
     vuln = client.get("/api/vulnerabilities", params={"project_id": "p1"}).json()[0]
     resp = client.get(f"/api/vulnerabilities/{vuln['id']}/report")

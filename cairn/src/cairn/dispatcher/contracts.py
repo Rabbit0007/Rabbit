@@ -23,6 +23,112 @@ def _unwrap_wrapped_payload(payload: dict[str, Any]) -> tuple[bool | None, dict[
 
 # ── Decide payload validation ──────────────────────────────────────────
 
+def _non_empty_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty string")
+    return value.strip()
+
+
+def _integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    return value
+
+
+def _fact_ids(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{field} must be a non-empty array")
+    result = [_non_empty_string(item, f"{field}[]") for item in value]
+    if len(result) != len(set(result)):
+        raise ValueError(f"{field} must not contain duplicate fact ids")
+    return result
+
+
+def _validate_complete(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"goal_id", "from", "description"}:
+        raise ValueError("complete must contain only goal_id, from, and description")
+    return {
+        "goal_id": _non_empty_string(value["goal_id"], "complete.goal_id"),
+        "from": _fact_ids(value["from"], "complete.from"),
+        "description": _non_empty_string(value["description"], "complete.description"),
+    }
+
+
+def _validate_steps(value: Any, max_steps: int) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError("steps must be an array")
+    if len(value) > max_steps:
+        raise ValueError(f"steps must contain at most {max_steps} entries")
+    result: list[dict[str, Any]] = []
+    for index, step in enumerate(value):
+        if not isinstance(step, dict):
+            raise ValueError(f"steps[{index}] must be an object")
+        extra = set(step) - {"from", "description", "goal_id", "priority"}
+        if extra or "from" not in step or "description" not in step:
+            raise ValueError(f"invalid step at index {index}")
+        item: dict[str, Any] = {
+            "from": _fact_ids(step["from"], f"steps[{index}].from"),
+            "description": _non_empty_string(step["description"], f"steps[{index}].description"),
+        }
+        goal_id = step.get("goal_id")
+        if goal_id is not None:
+            item["goal_id"] = _non_empty_string(goal_id, f"steps[{index}].goal_id")
+        item["priority"] = _integer(step.get("priority", 0), f"steps[{index}].priority")
+        result.append(item)
+    return result
+
+
+def _validate_step_updates(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError("step_updates must be an array")
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, update in enumerate(value):
+        if not isinstance(update, dict):
+            raise ValueError(f"step_updates[{index}] must be an object")
+        step_id = _non_empty_string(update.get("id"), f"step_updates[{index}].id")
+        if step_id in seen:
+            raise ValueError("step_updates must not update the same step twice")
+        seen.add(step_id)
+        if update.get("action") == "abandon":
+            if set(update) != {"id", "action"}:
+                raise ValueError(f"invalid abandon update at index {index}")
+            result.append({"id": step_id, "action": "abandon"})
+            continue
+        if set(update) != {"id", "priority"}:
+            raise ValueError(f"invalid priority update at index {index}")
+        result.append({"id": step_id, "priority": _integer(update["priority"], f"step_updates[{index}].priority")})
+    return result
+
+
+def _validate_sub_goals(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError("sub_goals must be an array")
+    result: list[dict[str, Any]] = []
+    for index, sub_goal in enumerate(value):
+        if not isinstance(sub_goal, dict):
+            raise ValueError(f"sub_goals[{index}] must be an object")
+        action = sub_goal.get("action")
+        if action == "create":
+            extra = set(sub_goal) - {"action", "description", "parent_goal_id", "priority"}
+            if extra or "description" not in sub_goal:
+                raise ValueError(f"invalid sub-goal create at index {index}")
+            item: dict[str, Any] = {
+                "action": "create",
+                "description": _non_empty_string(sub_goal["description"], f"sub_goals[{index}].description"),
+                "priority": _integer(sub_goal.get("priority", 0), f"sub_goals[{index}].priority"),
+            }
+            parent = sub_goal.get("parent_goal_id")
+            if parent is not None:
+                item["parent_goal_id"] = _non_empty_string(parent, f"sub_goals[{index}].parent_goal_id")
+            result.append(item)
+            continue
+        if action == "delete" and set(sub_goal) == {"action", "id"}:
+            result.append({"action": "delete", "id": _non_empty_string(sub_goal["id"], f"sub_goals[{index}].id")})
+            continue
+        raise ValueError(f"invalid sub-goal action at index {index}")
+    return result
+
 def validate_decide_payload(
     payload: dict[str, Any], open_steps_empty: bool, max_steps: int,
 ) -> tuple[str, dict[str, Any] | None]:
@@ -37,63 +143,33 @@ def validate_decide_payload(
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
 
-    # Check for complete
+    allowed = {"complete", "steps", "step_updates", "sub_goals"}
+    extra = set(data) - allowed
+    if extra:
+        raise ValueError(f"unexpected decide data keys: {', '.join(sorted(extra))}")
+
     complete = data.get("complete")
     if complete is not None:
-        if not isinstance(complete, dict):
-            raise ValueError("complete must be an object")
-        if "goal_id" not in complete or "from" not in complete or "description" not in complete:
-            raise ValueError("complete must have goal_id, from, and description")
-        return "complete", complete
+        if set(data) != {"complete"}:
+            raise ValueError("complete cannot coexist with graph mutations")
+        return "complete", _validate_complete(complete)
 
-    # Check for steps
-    steps = data.get("steps")
-    if steps is not None:
-        if not isinstance(steps, list):
-            raise ValueError("steps must be an array")
-        for i, step in enumerate(steps):
-            if not isinstance(step, dict) or "from" not in step or "description" not in step:
-                raise ValueError(f"invalid step at index {i}")
-        if not steps and open_steps_empty:
-            raise ValueError("steps must not be empty when open_steps is empty")
-        steps = steps[:max_steps]
+    mutations: dict[str, Any] = {}
+    if "steps" in data:
+        mutations["steps"] = _validate_steps(data["steps"], max_steps)
+    if "step_updates" in data:
+        mutations["step_updates"] = _validate_step_updates(data["step_updates"])
+    if "sub_goals" in data:
+        mutations["sub_goals"] = _validate_sub_goals(data["sub_goals"])
 
-    # Check for findings (Cairn_Y addition)
-    findings = data.get("findings")
-    if findings is not None:
-        if not isinstance(findings, list):
-            raise ValueError("findings must be an array")
-        for i, finding in enumerate(findings):
-            if not isinstance(finding, dict):
-                raise ValueError(f"invalid finding at index {i}")
-            if "title" not in finding or "description" not in finding or "severity" not in finding:
-                raise ValueError(f"finding at index {i} must have title, description, and severity")
+    if open_steps_empty and not mutations.get("steps"):
+        raise ValueError("at least one step is required when open_steps is empty")
+    if any(mutations.values()):
+        populated = [key for key, value in mutations.items() if value]
+        if len(populated) == 1:
+            return populated[0], {populated[0]: mutations[populated[0]]}
+        return "mutations", mutations
 
-    # Return based on what we have
-    if steps or findings:
-        result = {}
-        if steps:
-            result["steps"] = steps
-        if findings:
-            result["findings"] = findings
-        return "steps", result
-
-    # Check for step_updates
-    step_updates = data.get("step_updates")
-    if step_updates is not None:
-        if not isinstance(step_updates, list):
-            raise ValueError("step_updates must be an array")
-        return "step_updates", {"step_updates": step_updates}
-
-    # Check for sub_goals
-    sub_goals = data.get("sub_goals")
-    if sub_goals is not None:
-        if not isinstance(sub_goals, list):
-            raise ValueError("sub_goals must be an array")
-        return "sub_goals", {"sub_goals": sub_goals}
-
-    if open_steps_empty:
-        raise ValueError("steps is required when open_steps is empty")
     return "noop", None
 
 
@@ -111,6 +187,12 @@ def validate_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, An
     if not isinstance(data, dict):
         raise ValueError("accepted must be true or false")
 
+    extra = set(data) - {"description", "finding"}
+    if extra:
+        raise ValueError(
+            f"unexpected execute data keys: {', '.join(sorted(extra))}"
+        )
+
     description = data.get("description")
     if not isinstance(description, str) or not description.strip():
         raise ValueError("description is required")
@@ -121,156 +203,21 @@ def validate_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, An
     if finding is not None:
         if not isinstance(finding, dict):
             raise ValueError("finding must be an object")
-        if "title" not in finding or "severity" not in finding:
-            raise ValueError("finding must have title and severity")
-        result["finding"] = finding
+        extra = set(finding) - {"title", "description", "severity", "kind", "data"}
+        if extra or "title" not in finding or "description" not in finding:
+            raise ValueError("finding must contain title and description")
+        severity = finding.get("severity", "info")
+        if severity not in {"critical", "high", "medium", "low", "info"}:
+            raise ValueError("finding.severity is invalid")
+        structured_data = finding.get("data", {})
+        if not isinstance(structured_data, dict):
+            raise ValueError("finding.data must be an object")
+        result["finding"] = {
+            "title": _non_empty_string(finding["title"], "finding.title"),
+            "description": _non_empty_string(finding["description"], "finding.description"),
+            "severity": severity,
+            "kind": _non_empty_string(finding.get("kind", "finding"), "finding.kind"),
+            "data": structured_data,
+        }
 
     return "fact", result
-
-
-# ── Legacy payload validation (backward compat) ────────────────────────
-
-def _is_dict(value: Any) -> bool:
-    return isinstance(value, dict)
-
-
-def _looks_like_reason_data(payload: dict[str, Any]) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    keys = set(payload)
-    if keys == {"complete"}:
-        complete = payload["complete"]
-        return isinstance(complete, dict) and "from" in complete and "description" in complete
-    if keys == {"intents"}:
-        return isinstance(payload["intents"], list)
-    if keys == {"intent"}:
-        intent = payload["intent"]
-        return isinstance(intent, dict) and "from" in intent and "description" in intent
-    return False
-
-
-def _looks_like_bootstrap_execute_data(payload: dict[str, Any]) -> bool:
-    if not isinstance(payload, dict) or set(payload) != {"fact", "complete"}:
-        return False
-    return _is_dict(payload.get("fact")) and _is_dict(payload.get("complete"))
-
-
-def _looks_like_bootstrap_conclude_data(payload: dict[str, Any]) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    keys = set(payload)
-    if keys not in ({"fact"}, {"fact", "complete"}):
-        return False
-    return _is_dict(payload.get("fact"))
-
-
-def _looks_like_explore_data(payload: dict[str, Any]) -> bool:
-    return isinstance(payload, dict) and set(payload) == {"description"}
-
-
-def validate_reason_payload(
-    payload: dict[str, Any], open_intents_empty: bool, max_intents: int,
-) -> tuple[str, dict[str, Any] | list[dict[str, Any]] | None]:
-    accepted, data = _unwrap_wrapped_payload(payload)
-    if accepted is False:
-        return "rejected", None
-    if accepted is None:
-        if not _looks_like_reason_data(payload):
-            raise ValueError("accepted must be true or false")
-        data = payload
-    if not isinstance(data, dict):
-        raise ValueError("accepted must be true or false")
-    complete = data.get("complete")
-    intents = data.get("intents")
-    if intents is None:
-        singular = data.get("intent")
-        if isinstance(singular, dict):
-            intents = [singular]
-    if complete is not None:
-        if intents is not None:
-            raise ValueError("complete and intents cannot coexist")
-        if not isinstance(complete, dict) or "from" not in complete or "description" not in complete:
-            raise ValueError("invalid complete payload")
-        return "complete", complete
-    if intents is not None:
-        if not isinstance(intents, list):
-            raise ValueError("intents must be an array")
-        for i, intent in enumerate(intents):
-            if not isinstance(intent, dict) or "from" not in intent or "description" not in intent:
-                raise ValueError(f"invalid intent at index {i}")
-        if not intents and open_intents_empty:
-            raise ValueError("intents must not be empty when open_intents is empty")
-        intents = intents[:max_intents]
-        if not intents:
-            return "noop", None
-        return "intents", intents
-    if open_intents_empty:
-        raise ValueError("intents is required when open_intents is empty")
-    return "noop", None
-
-
-def validate_bootstrap_execute_payload(payload: dict[str, Any]) -> tuple[str, dict[str, str] | None]:
-    accepted, data = _unwrap_wrapped_payload(payload)
-    if accepted is False:
-        return "rejected", None
-    if accepted is None:
-        if not _looks_like_bootstrap_execute_data(payload):
-            raise ValueError("accepted must be true or false")
-        data = payload
-    if not isinstance(data, dict):
-        raise ValueError("accepted must be true or false")
-    fact = data.get("fact")
-    if not isinstance(fact, dict):
-        raise ValueError("fact is required")
-    fact_description = fact.get("description")
-    if not isinstance(fact_description, str) or not fact_description.strip():
-        raise ValueError("fact.description is required")
-    result = {"fact_description": fact_description.strip()}
-    complete = data.get("complete")
-    if complete is None:
-        raise ValueError("complete is required")
-    if not isinstance(complete, dict):
-        raise ValueError("complete must be an object")
-    complete_description = complete.get("description")
-    if not isinstance(complete_description, str) or not complete_description.strip():
-        raise ValueError("complete.description is required")
-    result["complete_description"] = complete_description.strip()
-    return "complete", result
-
-
-def validate_bootstrap_conclude_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
-    accepted, data = _unwrap_wrapped_payload(payload)
-    if accepted is False:
-        return "rejected", None
-    if accepted is None:
-        if not _looks_like_bootstrap_conclude_data(payload):
-            raise ValueError("accepted must be true or false")
-        data = payload
-    if not isinstance(data, dict):
-        raise ValueError("accepted must be true or false")
-    extra_keys = set(data) - {"fact", "complete"}
-    if extra_keys:
-        raise ValueError("unexpected keys in conclude payload")
-    fact = data.get("fact")
-    if not isinstance(fact, dict):
-        raise ValueError("fact is required")
-    fact_description = fact.get("description")
-    if not isinstance(fact_description, str) or not fact_description.strip():
-        raise ValueError("fact.description is required")
-    return "fact", fact_description.strip()
-
-
-def validate_explore_payload(payload: dict[str, Any]) -> tuple[str, str | None]:
-    accepted, data = _unwrap_wrapped_payload(payload)
-    if accepted is False:
-        return "rejected", None
-    if accepted is None:
-        if not _looks_like_explore_data(payload):
-            raise ValueError("accepted must be true or false")
-        data = payload
-    if not isinstance(data, dict):
-        raise ValueError("accepted must be true or false")
-    description = data.get("description")
-    if not isinstance(description, str) or not description.strip():
-        raise ValueError("description is required")
-    return "fact", description.strip()

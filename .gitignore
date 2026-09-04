@@ -1,8 +1,14 @@
 .vscode/
 .DS_Store
 __pycache__/
+*.py[cod]
 .playwright-cli/
 datas/
+
+# Rabbit runtime state. Keep only reusable context templates in Git.
+.rabbit/backups/
+.rabbit/context/projects/*.project-context.yaml
+!.rabbit/context/projects/_template.project-context.yaml
 
 # Secrets — never commit real API keys / tokens.
 .env

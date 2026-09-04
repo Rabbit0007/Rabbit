@@ -1,9 +1,8 @@
-"""Pydantic models for project-level campaign synthesis.
+"""Pydantic models for the read-only project campaign view.
 
-This module shapes a read-only, project-scoped summary view that aggregates
-existing facts, intents, hints, and extracted vulnerabilities into a concise
-assessment. It does not introduce new persistence tables; the response is
-derived on demand from the current project state.
+The view is derived from Cairn-Y's native Fact/Goal/Step/Finding state.  The
+``intents`` fields are temporary response aliases for older Rabbit clients;
+new clients use ``steps`` and ``open_steps``.
 """
 
 from __future__ import annotations
@@ -23,6 +22,11 @@ CampaignFindingConfidence = Literal["confirmed", "supported", "tentative"]
 class CampaignCounts(BaseModel):
     facts: int = 0
     hints: int = 0
+    goals: int = 0
+    steps: int = 0
+    open_steps: int = 0
+    # Backward-compatible response fields.  They mirror the Step counts and
+    # are not backed by a second Intent state model.
     intents: int = 0
     open_intents: int = 0
     vulnerabilities: int = 0
@@ -49,6 +53,8 @@ class CampaignSynthesis(BaseModel):
     summary: str
     counts: CampaignCounts
     top_findings: list[CampaignFinding] = Field(default_factory=list)
+    open_steps: list[str] = Field(default_factory=list)
+    # Backward-compatible alias for older frontend builds.
     open_intents: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)

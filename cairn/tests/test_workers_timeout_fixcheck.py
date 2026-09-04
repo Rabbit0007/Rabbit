@@ -107,7 +107,7 @@ def _worker_item(name: str = "mock-1") -> dict:
         "name": name,
         "type": "mock",
         "enabled": True,
-        "task_types": ["bootstrap"],
+        "task_types": ["decide", "execute"],
         "max_running": 1,
         "priority": 0,
         "env": {},

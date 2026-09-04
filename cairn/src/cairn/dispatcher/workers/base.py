@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import abc
 import re
-import shlex
 import uuid
 from dataclasses import dataclass
 
 from cairn.dispatcher.config import WorkerConfig
+from cairn.dispatcher.workers.health import HealthResult
 
 
 @dataclass(slots=True)
@@ -21,22 +21,31 @@ class WorkerDriver(abc.ABC):
     def supports_conclude(self) -> bool:
         return True
 
+    def local_binary(self, worker: WorkerConfig | None = None) -> str | None:
+        """Executable this driver invokes in local mode, checked on PATH at startup.
+
+        None means the driver has no host binary to verify (or is not used locally).
+        """
+        return None
+
     def prepare_session(self) -> str | None:
         return None
 
-    def build_startup_healthcheck(self, worker: WorkerConfig) -> list[str]:
-        return self.build_healthcheck(worker)
-
-    def describe_startup_healthcheck(self, worker: WorkerConfig) -> str:
-        return shlex.join(self.build_startup_healthcheck(worker))
-
     @abc.abstractmethod
-    def build_healthcheck(self, worker: WorkerConfig) -> list[str]:
+    def check_health(self, worker: WorkerConfig, *, timeout: float) -> HealthResult:
+        """Verify this worker's LLM config is usable, in-process (no container, no curl)."""
         raise NotImplementedError
+
+    def describe_health(self, worker: WorkerConfig) -> str:
+        return "in-process API ping"
 
     @abc.abstractmethod
     def build_execute(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
         raise NotImplementedError
+
+    def build_decide(self, worker: WorkerConfig, prompt: str, session: str | None) -> DriverResult:
+        """Build a graph-only run. Drivers should remove world-mutating tools."""
+        return self.build_execute(worker, prompt, session)
 
     @abc.abstractmethod
     def build_conclude(self, worker: WorkerConfig, prompt: str, session: str) -> list[str]:
@@ -47,11 +56,6 @@ class WorkerDriver(abc.ABC):
 
     def extract_response_text(self, stdout: str, stderr: str) -> str:
         return stdout
-
-    def healthcheck_error(self, returncode: int, stdout: str, stderr: str) -> str | None:
-        if returncode == 0:
-            return None
-        return stderr.strip() or stdout.strip() or f"worker exited with code {returncode}"
 
 
 class SeedSessionDriver(WorkerDriver):

@@ -104,6 +104,7 @@ class WorkerObservabilityRunningTask(BaseModel):
     project_name: str
     task_type: str
     current_task: str
+    step_id: str | None = None
     intent_id: str | None = None
     running_seconds: float | None = None
 
@@ -117,6 +118,7 @@ class WorkerObservabilityRecentTask(BaseModel):
     started_at: str
     completed_at: str | None = None
     duration_seconds: float | None = None
+    step_id: str | None = None
     intent_id: str | None = None
 
 
@@ -138,7 +140,7 @@ class WorkerObservability(BaseModel):
     rejections: list[WorkerObservabilityRejection] = Field(default_factory=list)
 
 
-TaskType = Literal["reason", "explore", "bootstrap"]
+TaskType = Literal["decide", "execute"]
 WorkerType = Literal["claudecode", "codex", "pi", "mock"]
 
 
@@ -154,9 +156,17 @@ class WorkerConfigItem(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     secret_env_keys: list[str] = Field(default_factory=list)
 
-    @field_validator("task_types")
+    @field_validator("task_types", mode="before")
     @classmethod
-    def validate_task_types(cls, value: list[TaskType]) -> list[TaskType]:
+    def validate_task_types(cls, value):
+        if isinstance(value, list):
+            migrated: list[str] = []
+            mapping = {"reason": ("decide",), "explore": ("execute",), "bootstrap": ("decide", "execute")}
+            for item in value:
+                for canonical in mapping.get(item, (item,)):
+                    if canonical not in migrated:
+                        migrated.append(canonical)
+            value = migrated
         if not value:
             raise ValueError("task_types must not be empty")
         if len(set(value)) != len(value):

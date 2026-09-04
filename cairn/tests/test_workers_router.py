@@ -432,7 +432,7 @@ def test_worker_observability_returns_runtime_outcomes_and_running_tasks(client,
     _insert_history(
         worker_name="alpha",
         project_id="proj-1",
-        task_type="explore",
+            task_type="execute",
         started_at="2024-01-01T00:00:00Z",
         completed_at="2024-01-01T00:05:00Z",
         duration_seconds=5.0,
@@ -578,7 +578,7 @@ def test_history_entry_carries_all_required_fields(client, temp_db):
     _insert_history(
         worker_name="alpha",
         project_id="proj-1",
-        task_type="explore",
+        task_type="execute",
         intent_id="i24",
         started_at="2024-01-01T00:24:00Z",
         completed_at="2024-01-01T00:30:00Z",
@@ -588,8 +588,8 @@ def test_history_entry_carries_all_required_fields(client, temp_db):
 
     entry = client.get("/api/workers/alpha/history").json()[0]
     assert entry["project_name"] == "Target Project"
-    assert entry["task_type"] == "explore"
-    assert entry["description"] == "explore on Target Project (intent i24)"
+    assert entry["task_type"] == "execute"
+    assert entry["description"] == "execute on Target Project (step i24)"
     assert entry["started_at"] == "2024-01-01T00:24:00Z"
     assert entry["duration_seconds"] == 24.0
     assert entry["outcome"] == "success"
