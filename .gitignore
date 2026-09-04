@@ -28,3 +28,7 @@ cairn/src/cairn/server/static/assets/
 
 # Claude Code session artifacts.
 .claude/
+
+# Local QA/render artifacts.
+.codex-artifacts/
+proj_*_漏洞整理.md
