@@ -1,0 +1,67 @@
+server: http://rabbit-pentest-server:8000
+runtime:
+  max_workers: 4
+  max_running_projects: 1
+  max_project_workers: 4
+  interval: 3
+  healthcheck_timeout: 60
+  worker_healthcheck: startup_only
+  execution: container
+  prompt_group: default
+tasks:
+  decide:
+    timeout: 300
+    max_steps: 3
+  execute:
+    timeout: 300
+    conclude_timeout: 90
+container:
+  image: rabbit-pentest-worker:pi-0.84.4
+  network_mode: host
+  completed_action: stop
+  cap_add: []
+  name_prefix: rabbit-pentest-dispatch-
+  startup_name_prefix: rabbit-pentest-startup-healthcheck-
+  extra_hosts:
+    host.docker.internal: 127.0.0.1
+    gateway.docker.internal: 127.0.0.1
+    docker.for.mac.host.internal: 127.0.0.1
+local: null
+common_env:
+  TSEC_SERVER_HOST: 127.0.0.1:8000
+  TSEC_AGENT_TOKEN: replace-with-agent-token
+workers:
+- name: glm-5.3-1
+  type: pi
+  enabled: true
+  task_types: [decide, execute]
+  max_running: 1
+  priority: 0
+  env: &glm_5_3_env
+    TSEC_SERVER_HOST: 127.0.0.1:8000
+    TSEC_AGENT_TOKEN: replace-with-agent-token
+    PI_MODEL: glm-5.3
+    PI_BASE_URL: https://open.bigmodel.cn/api/coding/paas/v4
+    PI_API_KEY: replace-with-your-model-api-key
+    PI_PROVIDER_API: openai-completions
+- name: glm-5.3-2
+  type: pi
+  enabled: true
+  task_types: [decide, execute]
+  max_running: 1
+  priority: 1
+  env: *glm_5_3_env
+- name: glm-5.3-3
+  type: pi
+  enabled: true
+  task_types: [decide, execute]
+  max_running: 1
+  priority: 2
+  env: *glm_5_3_env
+- name: glm-5.3-4
+  type: pi
+  enabled: true
+  task_types: [decide, execute]
+  max_running: 1
+  priority: 3
+  env: *glm_5_3_env

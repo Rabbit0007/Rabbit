@@ -1,0 +1,18 @@
+schema_version: 1
+inherits: ../default.project-context.yaml
+
+project:
+  project_id: proj_xxx
+  target_summary: ""
+  goal: ""
+  notes: ""
+
+override:
+  authorization: {}
+  scope: {}
+  output: {}
+
+# 说明：
+# 1. 默认情况下，只填 project 段。
+# 2. 只有当某个项目的授权边界与全局默认不同，才填写 override。
+# 3. override 中只写变化项，不要复制整份默认配置。

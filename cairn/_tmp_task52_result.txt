@@ -1,0 +1,13 @@
+worker_task_history in tables: True
+idx_worker_history_worker present: True
+idx_worker_history_time present: True
+columns: [('id', 'INTEGER', 0), ('worker_name', 'TEXT', 1), ('project_id', 'TEXT', 1), ('task_type', 'TEXT', 1), ('intent_id', 'TEXT', 0), ('started_at', 'TEXT', 1), ('completed_at', 'TEXT', 0), ('duration_seconds', 'REAL', 0), ('outcome', 'TEXT', 1)]
+CHECK rejects bad outcome: True
+nullable completed_at/duration/intent_id accepted: True
+WorkerStatus defaults: current_task=None avg=None hb=None
+current_task truncated to 120: True
+short current_task unchanged: True
+WorkerStatus rejects bad status: True
+history entry ok: True
+history entry duration_seconds default None: True
+history entry rejects bad outcome: True

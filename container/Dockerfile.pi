@@ -1,0 +1,17 @@
+# Reuse the toolchain image and upgrade only Pi.
+# Build: docker build --platform linux/amd64 -f container/Dockerfile.pi -t rabbit-pentest-worker:pi-0.84.4-jdk .
+FROM --platform=amd64 ghcr.io/oritera/cairn-worker-container@sha256:d90d40b7c634b8d5dc9464e04b863a185b9efe964ffd2b246f6e5cbc2a2ef053
+
+USER root
+RUN npm uninstall -g @mariozechner/pi-coding-agent && \
+    npm install -g @earendil-works/pi-coding-agent@0.84.4 && \
+    pi --version
+# JDK gives workers jdb/javap for Java debugging/protocol work (JDWP exploitation)
+# without hand-rolling wire protocols in Python.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends default-jdk-headless && \
+    rm -rf /var/lib/apt/lists/* && \
+    jdb --version && java -version
+# Bash tool-timeout extension injected by the dispatcher via `pi -e`.
+COPY cairn/src/cairn/dispatcher/workers/adapters/pi_tool_timeout.mjs /opt/cairn/pi_tool_timeout.mjs
+USER kali

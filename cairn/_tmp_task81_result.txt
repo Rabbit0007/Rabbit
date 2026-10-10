@@ -1,0 +1,4 @@
+full: {'id': 'evt-1', 'event_type': 'fact_discovery', 'description': 'Discovered open SSH port', 'timestamp': '2024-01-01T00:00:00Z', 'actor': 'explorer-1', 'node_id': 'fact-123'}
+defaults: actor=None node_id=None
+all 4 event_type literals accepted: OK
+invalid event_type rejected: OK

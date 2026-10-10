@@ -1,0 +1,16 @@
+templates columns: ['created_at', 'goal', 'hints_json', 'id', 'origin', 'title', 'user_id']
+columns match expected: True
+hints_json default: '[]'
+indexes: ['idx_templates_user', 'sqlite_autoindex_templates_1']
+has user_id index: True
+FK -> table=users from=user_id to=id on_delete=CASCADE
+inserted row default hints_json: '[]'
+builtin count: 4
+builtin titles: ['Web Application Assessment', 'Internal Network Pentest', 'External Network Pentest', 'CTF Challenge']
+has required 4 templates: True
+  builtin-web-app: keys=True hints=3(True) shape=True fields=True builtin=True
+  builtin-internal-network: keys=True hints=4(True) shape=True fields=True builtin=True
+  builtin-external-network: keys=True hints=4(True) shape=True fields=True builtin=True
+  builtin-ctf: keys=True hints=3(True) shape=True fields=True builtin=True
+unique ids: True
+ALL BUILTIN VALID: True

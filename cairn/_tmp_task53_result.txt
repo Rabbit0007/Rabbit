@@ -1,0 +1,11 @@
+[reachable] GET /api/workers -> 200
+  workers returned: ['alpha', 'beta', 'gamma']
+  PASS case 1 (reachable) assertions
+[unreachable] GET /api/workers -> 503
+  PASS case 2 (unreachable) -> {'message': 'Worker status unavailable', 'last_updated': None}
+[history] GET /api/workers/alpha/history -> 200
+  PASS case 3 (history) -> first={'project_name': 'Target Project', 'task_type': 'explore', 'description': 'explore on Target Project (intent i24)', 'started_at': '2024-01-01T00:24:00Z', 'duration_seconds': 24.0, 'outcome': 'success'}
+  PASS case 3b (null duration / missing project) -> {'project_name': 'proj-missing', 'task_type': 'reason', 'description': 'reason on proj-missing', 'started_at': '2024-01-02T00:00:00Z', 'duration_seconds': None, 'outcome': 'released'}
+  PASS case 3c (unknown worker -> empty list)
+
+RESULT: ALL PASS

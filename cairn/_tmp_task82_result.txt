@@ -1,0 +1,12 @@
+ROUTES: ['/api/projects/{project_id}/timeline']
+MISSING_PROJECT_RAISES: HTTPException 404
+EMPTY_TIMELINE_LEN: 0
+EVENT_COUNT: 6
+  2024-01-01T00:00:01Z | intent_declaration   | node=i001     | actor=alice    | explore A
+  2024-01-01T00:00:02Z | intent_declaration   | node=i002     | actor=bob      | exploit B
+  2024-01-01T00:00:03Z | intent_declaration   | node=i003     | actor=carol    | done
+  2024-01-01T00:00:05Z | intent_conclusion    | node=i002     | actor=worker-1 | exploit B
+  2024-01-01T00:00:05Z | fact_discovery       | node=f001     | actor=None     | found vuln
+  2024-01-01T00:00:06Z | project_completion   | node=i003     | actor=worker-2 | done
+ALL_ASSERTIONS_PASSED
+EXIT=0

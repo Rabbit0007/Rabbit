@@ -1,0 +1,15 @@
+cairn/frontend/node_modules/
+cairn/frontend/dist/
+cairn/.venv/
+cairn/**/__pycache__/
+cairn/.pytest_cache/
+cairn/src/cairn/server/static/assets/
+.git/
+datas/
+.env
+dispatch.local.yaml
+.rabbit/backups/
+.rabbit/context/projects/*.project-context.yaml
+!.rabbit/context/projects/_template.project-context.yaml
+README.zip
+artifacts/

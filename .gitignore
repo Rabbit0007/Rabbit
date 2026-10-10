@@ -1,0 +1,39 @@
+.vscode/
+.DS_Store
+__pycache__/
+*.py[cod]
+.playwright-cli/
+datas/
+
+# Rabbit runtime state. Keep only reusable context templates in Git.
+.rabbit/backups/
+.rabbit/context/projects/*.project-context.yaml
+!.rabbit/context/projects/_template.project-context.yaml
+
+# Secrets — never commit real API keys / tokens.
+.env
+dispatch.local.yaml
+dispatch.yaml.bak
+*.bak
+
+# Local notes / transcripts that may contain target info.
+未命名.txt
+*.local.txt
+/tools/*.log
+
+cairn/frontend/node_modules/
+cairn/frontend/dist/
+
+# Built frontend assets — only track index.html, not the hashed bundles.
+cairn/src/cairn/server/static/assets/
+
+# Claude Code session artifacts.
+.claude/
+
+# Local QA/render artifacts.
+.codex-artifacts/
+proj_*_漏洞整理.md
+
+# Local release artifacts not for publish.
+README.zip
+artifacts/
