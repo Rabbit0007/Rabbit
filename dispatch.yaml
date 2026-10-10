@@ -13,10 +13,14 @@ tasks:
     timeout: 300
     max_steps: 3
   execute:
-    timeout: 300
+    # 每步 600s 执行预算（探索 540s + 收尾预留 60s），是执行层收敛的关键配置
+    timeout: 600
     conclude_timeout: 90
+    conclude_reserve_seconds: 60
+    format_retries: 1
+    recovery_attempts: 3
 container:
-  image: rabbit-pentest-worker:pi-0.84.4
+  image: rabbit-pentest-worker:pi-0.84.4-jdk
   network_mode: host
   completed_action: stop
   cap_add: []
